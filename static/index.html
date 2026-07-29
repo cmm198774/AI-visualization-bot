@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lisa 的办公室</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="page-title">
+            <span>Lisa 的办公室</span>
+            <span class="user-info">
+                <span id="username-display"></span>
+                <button class="btn-logout" onclick="logout()">退出</button>
+            </span>
+        </div>
+        <div class="main-content">
+            <!-- Avatar 占位区 (Phase 3 集成 Live2D) -->
+            <div class="avatar-section">
+                <div class="avatar-area">
+                    <div class="avatar-placeholder">
+                        <div class="icon">👩💼</div>
+                        <div><small>Lisa - Live2D</small></div>
+                    </div>
+                </div>
+                <div class="mood-indicator">
+                    <span class="emoji">😄</span>
+                    <span id="mood-text">Lisa 心情：等待中</span>
+                </div>
+                <div class="audio-wave" id="audio-wave" style="display:none;">
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                    <div class="bar"></div>
+                </div>
+            </div>
+
+            <!-- Chat 聊天区 -->
+            <div class="chat-section">
+                <div class="chat-header">💬 对话</div>
+                <div class="status-bar" id="status-display" style="display:none;"></div>
+                <div class="chat-messages" id="chat-messages"></div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" placeholder="输入消息...">
+                    <button id="send-btn" onclick="sendMessage()">发送</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

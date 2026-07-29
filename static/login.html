@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lisa 的办公室 - 登录</title>
+    <link rel="stylesheet" href="/static/css/login.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <h1 class="login-title">Lisa 的办公室</h1>
+
+            <!-- 登录表单 -->
+            <div id="login-section">
+                <h2 class="form-title">登录</h2>
+                <form id="login-form" onsubmit="handleLogin(event)">
+                    <div class="form-group">
+                        <label for="login-username">用户名</label>
+                        <input type="text" id="login-username" required placeholder="请输入用户名">
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">密码</label>
+                        <input type="password" id="login-password" required placeholder="请输入密码">
+                    </div>
+                    <button type="submit" class="btn-primary">登录</button>
+                </form>
+                <div class="switch-mode">
+                    还没有账号？<a href="#" onclick="showRegister()">立即注册</a>
+                </div>
+            </div>
+
+            <!-- 注册表单 -->
+            <div id="register-section" style="display: none;">
+                <h2 class="form-title">注册</h2>
+                <form id="register-form" onsubmit="handleRegister(event)">
+                    <div class="form-group">
+                        <label for="reg-username">用户名</label>
+                        <input type="text" id="reg-username" required placeholder="请输入用户名">
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-password">密码</label>
+                        <input type="password" id="reg-password" required placeholder="请输入密码">
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-password-confirm">确认密码</label>
+                        <input type="password" id="reg-password-confirm" required placeholder="请再次输入密码">
+                    </div>
+                    <button type="submit" class="btn-primary">注册</button>
+                </form>
+                <div class="switch-mode">
+                    已有账号？<a href="#" onclick="showLogin()">立即登录</a>
+                </div>
+            </div>
+
+            <!-- 消息提示 -->
+            <div id="message-box" class="message-box" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/login.js"></script>
+</body>
+</html>
