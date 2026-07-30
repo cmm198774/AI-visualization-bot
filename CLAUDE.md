@@ -50,7 +50,7 @@
 ## 待完成功能
 
 ### Phase 2: TTS 集成
-- [x] CosyVoice2 语音合成（独立服务 tts_server.py，端口 9233）
+- [x] CosyVoice-300M-SFT 语音合成（独立服务 tts_server.py，端口 9233，内置"中文女"音色）
 - [x] 语音流式输出（逐句文字 + 音频，sentence_splitter 分句）
 - [x] 错误处理（TTS 失败静默降级为文本）
 - [x] 前端音频播放（队列 + 声波动画 + 🔊 开关）
@@ -136,6 +136,10 @@ conda run -n py310 python server.py
 - astream_events 抛出 NotImplementedError，使用 ainvoke + 回调替代
 - 浏览器缓存问题：修改前端后需要 Ctrl+Shift+R 刷新
 - Windows SSL 证书加载 bug：aiohttp 导入时 `ssl.create_default_context()` 调用 `_load_windows_store_certs` 可能抛出 `NOT_ENOUGH_DATA`。已在 `tts_client.py` 顶部用 monkey-patch 修复（改为使用 certifi 的 CA 证书包）
+- pip 安装时如遇 SSL 错误：`export SSL_CERT_FILE="<certifi_path>/cacert.pem"` 后用默认 PyPI（不用阿里云镜像）
+- NumPy 版本冲突：CosyVoice 依赖 `pyworld` 需要 NumPy 1.x，已降级到 `numpy==1.26.4`
+- CosyVoice2-0.5B 是基座模型，`inference_sft` 无内置音色。实际使用 `CosyVoice-300M-SFT`（内置"中文女"/"中文男"等音色）
+- pip SSL 全局修复：`export SSL_CERT_FILE="C:/ProgramData/Anaconda3/envs/py310/lib/site-packages/certifi/cacert.pem"`
 
 ## Agent 流程图
 ```
