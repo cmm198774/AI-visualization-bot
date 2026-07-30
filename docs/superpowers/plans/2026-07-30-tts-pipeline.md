@@ -438,6 +438,38 @@ git commit -m "feat(tts_server): rewrite with request queue + single worker
 - /health now reports queue_size"
 ```
 
+- [ ] **Step 6: 单独验证 tts_server**
+
+启动 TTS 服务并验证：
+
+```bash
+# 终端 1：启动 TTS 服务
+conda run -n py310 python tts_server.py
+
+# 终端 2：检查健康状态
+curl http://127.0.0.1:9233/health
+# Expected: {"status":"ready","queue_size":0}
+
+# 发送测试 TTS 请求
+curl -X POST http://127.0.0.1:9233/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text": "你好，这是一个测试。", "speaker": "中文女"}' \
+  --output test_output.wav
+# Expected: 返回 WAV 文件，可以播放
+
+# 验证队列机制（快速发多个请求）
+for i in 1 2 3; do
+  curl -X POST http://127.0.0.1:9233/tts \
+    -H "Content-Type: application/json" \
+    -d "{\"text\": \"句子$i\", \"speaker\": \"中文女\"}" \
+    --output "test_$i.wav" &
+done
+wait
+# Expected: 3 个文件都生成成功，queue_size 回到 0
+```
+
+确认无误后关闭 TTS 服务。
+
 ---
 
 ### Task 3: 新增 tts_stream() 异步生成器到 tts_client.py
@@ -754,6 +786,51 @@ git commit -m "feat(tts_client): add tts_stream async generator
 - Silent skip on TTS failure (TTS_SKIP sentinel)
 - 6 unit tests: order, skip, empty, single, all-fail, concurrency"
 ```
+
+- [ ] **Step 7: 单独验证 tts_client**
+
+启动 TTS 服务，然后用测试脚本验证 tts_client：
+
+```bash
+# 终端 1：启动 TTS 服务（如果还没启动）
+conda run -n py310 python tts_server.py
+
+# 终端 2：创建并运行验证脚本
+```
+
+创建临时测试脚本 `verify_tts_client.py`：
+
+```python
+"""单独验证 tts_client.tts_stream"""
+import asyncio
+from tts_client import tts_stream
+
+async def main():
+    sentences = ["你好，我是Lisa。", "今天天气不错呢！", "有什么可以帮你的吗？"]
+    print(f"开始测试，共 {len(sentences)} 句")
+
+    idx = 0
+    async for text, audio in tts_stream(sentences):
+        idx += 1
+        print(f"[{idx}] 收到: text={text[:20]}..., audio_size={len(audio)} bytes")
+
+    print(f"完成！共收到 {idx} 句音频")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+运行：
+```bash
+conda run -n py310 python verify_tts_client.py
+# Expected: 按顺序输出 3 句，每句都有 audio_size
+# 验证：顺序正确、无停顿（几乎是瞬间完成）
+
+# 清理临时文件
+rm verify_tts_client.py
+```
+
+确认无误后关闭 TTS 服务。
 
 ---
 
