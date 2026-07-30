@@ -105,6 +105,63 @@ function hideStatus() {
 let currentBotMsg = null;
 let currentBotText = "";
 
+// 音频队列
+let audioQueue = [];
+let isPlaying = false;
+let ttsEnabled = true;
+
+
+/* ==========================================
+   音频播放
+   ========================================== */
+function showAudioWave() {
+    const wave = document.getElementById("audio-wave");
+    if (wave) wave.style.display = "flex";
+}
+
+function hideAudioWave() {
+    const wave = document.getElementById("audio-wave");
+    if (wave) wave.style.display = "none";
+}
+
+function playNextAudio() {
+    if (audioQueue.length === 0) {
+        isPlaying = false;
+        hideAudioWave();
+        return;
+    }
+
+    isPlaying = true;
+    showAudioWave();
+
+    const base64Data = audioQueue.shift();
+    const audioBytes = Uint8Array.from(atob(base64Data), function(c) { return c.charCodeAt(0); });
+    const blob = new Blob([audioBytes], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+
+    const audio = new Audio(url);
+    audio.onended = function() {
+        URL.revokeObjectURL(url);
+        playNextAudio();
+    };
+    audio.onerror = function() {
+        URL.revokeObjectURL(url);
+        playNextAudio();
+    };
+    audio.play();
+}
+
+function toggleTTS() {
+    ttsEnabled = !ttsEnabled;
+    var btn = document.getElementById("tts-toggle");
+    if (btn) btn.textContent = ttsEnabled ? "🔊" : "🔇";
+    if (!ttsEnabled) {
+        audioQueue = [];
+        isPlaying = false;
+        hideAudioWave();
+    }
+}
+
 
 /* ==========================================
    发送消息并接收 SSE 流式响应
@@ -120,6 +177,8 @@ async function sendMessage() {
     // 创建 bot 消息占位
     currentBotMsg = appendMessage("bot", "");
     currentBotText = "";
+    audioQueue = [];
+    isPlaying = false;
     const cursor = document.createElement("span");
     cursor.className = "typing-cursor";
     currentBotMsg.appendChild(cursor);
@@ -192,6 +251,17 @@ function handleSSEEvent(data, cursor) {
 
         case "mood":
             updateMood(data.mood);
+            break;
+
+        case "audio":
+            if (ttsEnabled) {
+                audioQueue.push(data.data);
+                if (!isPlaying) playNextAudio();
+            }
+            break;
+
+        case "audio_done":
+            // 队列会在播完后自动隐藏声波动画
             break;
 
         case "error":
