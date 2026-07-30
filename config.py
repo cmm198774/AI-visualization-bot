@@ -64,3 +64,11 @@ MAX_CHECKPOINTS = int(os.getenv("MAX_CHECKPOINTS", "5"))
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+
+
+# ==========================================
+# TTS 服务配置
+# ==========================================
+TTS_SERVER_URL = os.getenv("TTS_SERVER_URL", "http://127.0.0.1:9233/tts")
+TTS_SPEAKER = os.getenv("TTS_SPEAKER", "中文女")
+TTS_TIMEOUT = int(os.getenv("TTS_TIMEOUT", "10"))
