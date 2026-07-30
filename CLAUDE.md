@@ -70,8 +70,9 @@
 ├── commands.py            # 命令处理模块（/clear, /compact, /status, /mood, /help）
 ├── memory_utils.py        # 消息压缩工具（compact_messages 函数，供 agent 和 commands 共用）
 ├── sentence_splitter.py   # 中文分句工具（按标点拆句，供 TTS 逐句输出）
-├── tts_client.py          # TTS 客户端（aiohttp 异步调用 TTS 服务）
-├── tts_server.py          # TTS 独立服务（封装 CosyVoice2，端口 9233）
+├── test_sentence_splitter.py # 分句单元测试（9 个用例）
+├── tts_client.py          # TTS 客户端（aiohttp 异步调用 TTS 服务，含 Windows SSL 修复）
+├── tts_server.py          # TTS 独立服务（封装 CosyVoice-300M-SFT，端口 9233）
 ├── tools.py               # Qdrant RAG 工具（get_info_from_local_db）
 ├── config.py              # 配置加载（从 .env 读取）
 ├── database.py            # SQLite 用户数据库（users 表）
@@ -112,7 +113,8 @@
     │   │   └── 2026-07-28-command-system-design.md          # 命令系统设计文档
     │   └── plans/
     │       ├── 2026-07-26-phase1-core-pipeline.md           # Phase 1 实施计划
-    │       └── 2026-07-28-command-system.md                 # 命令系统实施计划
+    │       ├── 2026-07-28-command-system.md                 # 命令系统实施计划
+    │       └── 2026-07-30-phase2-tts-integration.md         # Phase 2 TTS 实施计划
     └── test_reports/
         └── phase1-test-report.md           # Phase 1 测试报告
 ```
@@ -237,7 +239,11 @@ data: {"type": "status", "status": "detecting_mood"}
 data: {"type": "status", "status": "compacting"}
 data: {"type": "status", "status": "thinking"}
 data: {"type": "status", "status": "tool_call", "tool": "工具调用"}
-data: {"type": "text", "content": "回复内容"}
+data: {"type": "text", "content": "第一句话"}
+data: {"type": "audio", "data": "<base64 WAV>"}
+data: {"type": "text", "content": "第二句话"}
+data: {"type": "audio", "data": "<base64 WAV>"}
+data: {"type": "audio_done"}
 data: {"type": "mood", "mood": "friendly"}
 data: {"type": "done"}
 ```
