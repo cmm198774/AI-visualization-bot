@@ -28,3 +28,5 @@ python-multipart==0.0.9
 
 # TTS 语音合成
 aiohttp==3.9.5
+numpy
+soundfile
