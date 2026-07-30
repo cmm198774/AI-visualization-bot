@@ -280,3 +280,20 @@ body {
     background: #d1d5db;
     border-radius: 2px;
 }
+
+/* ==========================================
+   TTS 语音开关按钮
+   ========================================== */
+#tts-toggle {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: background 0.2s;
+}
+
+#tts-toggle:hover {
+    background: #f0f0f0;
+}
