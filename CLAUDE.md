@@ -50,9 +50,10 @@
 ## 待完成功能
 
 ### Phase 2: TTS 集成
-- [ ] CosyVoice2 语音合成
-- [ ] 语音流式输出
-- [ ] 错误处理（TTS 失败降级为文本）
+- [x] CosyVoice2 语音合成（独立服务 tts_server.py，端口 9233）
+- [x] 语音流式输出（逐句文字 + 音频，sentence_splitter 分句）
+- [x] 错误处理（TTS 失败静默降级为文本）
+- [x] 前端音频播放（队列 + 声波动画 + 🔊 开关）
 
 ### Phase 3: Live2D 虚拟形象
 - [ ] Live2D 集成（pixi-live2d-display）
@@ -64,10 +65,13 @@
 20260725_Agent_AI可视化机器人/
 ├── .env                    # 环境变量配置（API keys, SECRET_KEY 等）
 ├── CLAUDE.md              # 项目记忆文件
-├── server.py              # FastAPI 主服务器，SSE 流式输出，命令拦截
+├── server.py              # FastAPI 主服务器，SSE 流式输出，命令拦截，TTS 集成
 ├── agent.py               # LangGraph Agent（4 节点：detect_mood, compact, model, tools）
 ├── commands.py            # 命令处理模块（/clear, /compact, /status, /mood, /help）
 ├── memory_utils.py        # 消息压缩工具（compact_messages 函数，供 agent 和 commands 共用）
+├── sentence_splitter.py   # 中文分句工具（按标点拆句，供 TTS 逐句输出）
+├── tts_client.py          # TTS 客户端（aiohttp 异步调用 TTS 服务）
+├── tts_server.py          # TTS 独立服务（封装 CosyVoice2，端口 9233）
 ├── tools.py               # Qdrant RAG 工具（get_info_from_local_db）
 ├── config.py              # 配置加载（从 .env 读取）
 ├── database.py            # SQLite 用户数据库（users 表）
@@ -115,8 +119,10 @@
 
 ## 运行方式
 ```bash
-# 使用 py310 conda 环境
-export PATH="/c/ProgramData/Anaconda3/Scripts:/c/ProgramData/Anaconda3:$PATH"
+# 终端 1：启动 TTS 服务（可选，不开则文字正常但无语音）
+conda run -n py310 python tts_server.py
+
+# 终端 2：启动主服务
 conda run -n py310 python server.py
 ```
 
@@ -129,6 +135,7 @@ conda run -n py310 python server.py
 ## 已知问题
 - astream_events 抛出 NotImplementedError，使用 ainvoke + 回调替代
 - 浏览器缓存问题：修改前端后需要 Ctrl+Shift+R 刷新
+- Windows SSL 证书加载 bug：aiohttp 导入时 `ssl.create_default_context()` 调用 `_load_windows_store_certs` 可能抛出 `NOT_ENOUGH_DATA`。已在 `tts_client.py` 顶部用 monkey-patch 修复（改为使用 certifi 的 CA 证书包）
 
 ## Agent 流程图
 ```
