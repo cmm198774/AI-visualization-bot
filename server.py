@@ -27,6 +27,8 @@ from agent import create_agent_graph
 from tools import get_info_from_local_db, TOOL_DESCRIPTIONS
 from database import init_db, create_user, get_user_by_username
 from auth import verify_password, get_password_hash, create_access_token
+from sentence_splitter import split_sentences
+from tts_client import synthesize_speech_b64
 
 
 # ==========================================
@@ -317,12 +319,30 @@ async def _event_stream(query: str, user_id: str):
                 final_message = msg.content
                 break
 
-        # 发送最终文本
-        if final_message:
-            text_data = json.dumps({"type": "text", "content": final_message}, ensure_ascii=False)
+        if not final_message:
+            final_message = "抱歉，我暂时无法回复。"
+
+        # 分句
+        sentences = split_sentences(final_message)
+        if not sentences:
+            sentences = [final_message]
+
+        # 逐句发送文字 + 音频
+        for sentence in sentences:
+            # 1. 先 yield 文字（前端立即显示）
+            text_data = json.dumps({"type": "text", "content": sentence}, ensure_ascii=False)
             yield "data: " + text_data + "\n\n"
-        else:
-            yield "data: " + json.dumps({"type": "text", "content": "抱歉，我暂时无法回复。"}, ensure_ascii=False) + "\n\n"
+
+            # 2. 调 TTS 服务获取音频（失败则静默跳过）
+            try:
+                audio_b64 = await synthesize_speech_b64(sentence)
+                audio_data = json.dumps({"type": "audio", "data": audio_b64}, ensure_ascii=False)
+                yield "data: " + audio_data + "\n\n"
+            except Exception as e:
+                logger.debug(f"[{user_id}] TTS 跳过: {e}")
+
+        # 发送音频结束标记
+        yield "data: " + json.dumps({"type": "audio_done"}) + "\n\n"
 
         # 发送情绪标签
         mood_data = json.dumps({"type": "mood", "mood": mood}, ensure_ascii=False)
