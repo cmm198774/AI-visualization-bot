@@ -1,6 +1,6 @@
 """
 TTS 独立服务模块
-封装 CosyVoice2 模型，提供 HTTP API 进行语音合成。
+封装 CosyVoice-300M-SFT 模型，提供 HTTP API 进行语音合成。
 启动方式: python tts_server.py
 端口: 9233
 """
@@ -26,8 +26,11 @@ logger = setup_global_logger()
 
 # 将 CosyVoice 项目目录加入 Python path
 COSYVOICE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CosyVoice")
+MATCHA_TTS_DIR = os.path.join(COSYVOICE_DIR, "third_party", "Matcha-TTS")
 if COSYVOICE_DIR not in sys.path:
     sys.path.insert(0, COSYVOICE_DIR)
+if MATCHA_TTS_DIR not in sys.path:
+    sys.path.insert(0, MATCHA_TTS_DIR)
 
 
 # ==========================================
@@ -41,19 +44,19 @@ model_status = "loading"
 # 加载模型
 # ==========================================
 def load_model():
-    """加载 CosyVoice2 模型到 GPU"""
+    """加载 CosyVoice-300M-SFT 模型到 GPU"""
     global model, model_status
 
-    model_path = os.path.join(COSYVOICE_DIR, "pretrained_models", "CosyVoice2-0.5B")
-    logger.info(f"加载 CosyVoice2 模型: {model_path}")
+    model_path = os.path.join(COSYVOICE_DIR, "pretrained_models", "CosyVoice-300M-SFT")
+    logger.info(f"加载 CosyVoice 模型: {model_path}")
 
     t0 = time.time()
     try:
-        from cosyvoice.cli.cosyvoice import CosyVoice2
-        model = CosyVoice2(model_path)
+        from cosyvoice.cli.cosyvoice import CosyVoice
+        model = CosyVoice(model_path)
         elapsed = time.time() - t0
         model_status = "ready"
-        logger.info(f"CosyVoice2 模型加载完成: 耗时 {elapsed:.1f}s")
+        logger.info(f"CosyVoice 模型加载完成: 耗时 {elapsed:.1f}s, 音色: {model.list_available_spks()}")
     except Exception as e:
         model_status = "error"
         logger.error(f"CosyVoice2 模型加载失败: {e}")
@@ -130,7 +133,7 @@ async def tts(request: TTSRequest):
     try:
         logger.info(f"TTS 合成请求: text={request.text[:30]}..., speaker={request.speaker}")
 
-        # 调用 CosyVoice2 推理
+        # 调用 CosyVoice 推理
         audio_chunks = []
         for chunk in model.inference_sft(request.text, request.speaker):
             audio_chunks.append(chunk["tts_speech"].numpy().flatten())
@@ -145,8 +148,8 @@ async def tts(request: TTSRequest):
         # 拼接音频块
         audio_np = np.concatenate(audio_chunks)
 
-        # 转为 WAV
-        wav_bytes = numpy_to_wav(audio_np)
+        # 转为 WAV（使用模型采样率）
+        wav_bytes = numpy_to_wav(audio_np, sample_rate=model.sample_rate)
 
         elapsed = time.time() - t0
         logger.info(f"TTS 合成完成: duration={elapsed:.1f}s, size={len(wav_bytes)} bytes")
