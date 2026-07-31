@@ -1,7 +1,7 @@
 """
 TTS 独立服务模块
 封装 CosyVoice-300M-SFT 模型，提供 HTTP API 进行语音合成。
-使用请求队列 + 多 Worker 并发架构，充分利用 GPU 算力。
+每个 Worker 持有独立 model 实例，实现真正并行推理。
 启动方式: python tts_server.py
 端口: 9233
 """
@@ -10,6 +10,7 @@ import io
 import os
 import sys
 import time
+import threading
 
 import numpy as np
 import soundfile as sf
@@ -37,32 +38,9 @@ if MATCHA_TTS_DIR not in sys.path:
 
 
 # ==========================================
-# 全局状态
+# 模型路径
 # ==========================================
-model = None
-model_status = "loading"
-
-
-# ==========================================
-# 加载模型
-# ==========================================
-def load_model():
-    """加载 CosyVoice-300M-SFT 模型到 GPU"""
-    global model, model_status
-
-    model_path = os.path.join(COSYVOICE_DIR, "pretrained_models", "CosyVoice-300M-SFT")
-    logger.info(f"加载 CosyVoice 模型: {model_path}")
-
-    t0 = time.time()
-    try:
-        from cosyvoice.cli.cosyvoice import CosyVoice
-        model = CosyVoice(model_path)
-        elapsed = time.time() - t0
-        model_status = "ready"
-        logger.info(f"CosyVoice 模型加载完成: 耗时 {elapsed:.1f}s, 音色: {model.list_available_spks()}")
-    except Exception as e:
-        model_status = "error"
-        logger.error(f"CosyVoice 模型加载失败: {e}")
+MODEL_PATH = os.path.join(COSYVOICE_DIR, "pretrained_models", "CosyVoice-300M-SFT")
 
 
 # ==========================================
@@ -86,14 +64,14 @@ def numpy_to_wav(audio_np: np.ndarray, sample_rate: int = 22050) -> bytes:
 
 
 # ==========================================
-# 同步推理函数（在线程池中运行）
+# 同步推理函数（接收 model 参数）
 # ==========================================
-def run_inference(text: str, speaker: str) -> bytes:
+def run_inference(model_instance, text: str, speaker: str) -> bytes:
     """
     调用 CosyVoice 模型进行语音合成（同步函数）。
-    在 tts_worker 中通过 asyncio.to_thread() 调用。
 
     Args:
+        model_instance: CosyVoice 模型实例
         text: 要合成的文本 (str)
         speaker: 音色名称 (str)
 
@@ -101,21 +79,17 @@ def run_inference(text: str, speaker: str) -> bytes:
         bytes: WAV 格式音频数据
 
     Raises:
-        RuntimeError: 模型未就绪
-        Exception: 推理失败
+        RuntimeError: 推理失败
     """
-    if model_status != "ready" or model is None:
-        raise RuntimeError("模型未就绪")
-
     audio_chunks = []
-    for chunk in model.inference_sft(text, speaker):
+    for chunk in model_instance.inference_sft(text, speaker):
         audio_chunks.append(chunk["tts_speech"].numpy().flatten())
 
     if not audio_chunks:
         raise RuntimeError("合成失败：无音频输出")
 
     audio_np = np.concatenate(audio_chunks)
-    return numpy_to_wav(audio_np, sample_rate=model.sample_rate)
+    return numpy_to_wav(audio_np, sample_rate=model_instance.sample_rate)
 
 
 # ==========================================
@@ -134,21 +108,57 @@ class TTSJob:
 
 
 # ==========================================
-# 后台 Worker（多 Worker 并发，信号量控制 GPU 占用）
+# 加载单个模型实例
+# ==========================================
+def load_one_model(worker_id: int):
+    """
+    加载一个 CosyVoice 模型实例（在线程中运行）。
+
+    Args:
+        worker_id: worker 编号，用于日志
+
+    Returns:
+        CosyVoice 模型实例
+    """
+    logger.info(f"Worker #{worker_id} 加载模型...")
+    t0 = time.time()
+    from cosyvoice.cli.cosyvoice import CosyVoice
+    model_instance = CosyVoice(MODEL_PATH)
+    elapsed = time.time() - t0
+    logger.info(f"Worker #{worker_id} 模型加载完成: 耗时 {elapsed:.1f}s")
+    return model_instance
+
+
+# ==========================================
+# 后台 Worker（每个 worker 持有独立 model 实例）
 # ==========================================
 async def tts_worker(worker_id: int):
     """
     后台 worker 协程。
-    从 request_queue 中逐个取出请求，通过信号量控制 GPU 并发数。
-    多个 worker 同时运行，但同时最多 TTS_MAX_CONCURRENT 个在执行推理。
+    每个 worker 持有独立的 model 实例，实现真正并行推理。
+    通过信号量控制 GPU 并发数，防止 VRAM 溢出。
     """
-    logger.info(f"TTS worker #{worker_id} 启动")
+    # 在线程中加载模型（避免阻塞事件循环）
+    model_instance = await asyncio.to_thread(load_one_model, worker_id)
+
+    # 更新加载计数
+    global models_loaded_count, all_models_ready
+    with models_loaded_lock:
+        models_loaded_count += 1
+        if models_loaded_count >= TTS_MAX_CONCURRENT:
+            all_models_ready = True
+            logger.info(f"所有 {TTS_MAX_CONCURRENT} 个模型加载完成")
+
+    logger.info(f"TTS worker #{worker_id} 就绪 ({models_loaded_count}/{TTS_MAX_CONCURRENT})")
+
     while True:
         job = await request_queue.get()
         try:
             async with semaphore:
                 logger.info(f"Worker #{worker_id} 处理: text={job.text[:20]}...")
-                wav_bytes = await asyncio.to_thread(run_inference, job.text, job.speaker)
+                wav_bytes = await asyncio.to_thread(
+                    run_inference, model_instance, job.text, job.speaker
+                )
             if not job.future.done():
                 job.future.set_result(wav_bytes)
         except Exception as e:
@@ -171,16 +181,26 @@ class TTSRequest(BaseModel):
 # ==========================================
 app = FastAPI(title="Lisa TTS Service")
 
+# 模型就绪状态（所有 worker 模型都加载完才为 True）
+all_models_ready = False
+models_loaded_count = 0
+models_loaded_lock = threading.Lock()
+
 
 # ==========================================
-# 启动时创建多个 Worker
+# 启动时创建多个 Worker（每个加载独立模型）
 # ==========================================
 @app.on_event("startup")
 async def startup():
-    """启动时创建 TTS_MAX_CONCURRENT 个后台 worker"""
+    """启动时创建 TTS_MAX_CONCURRENT 个 worker，每个加载独立模型"""
+    global all_models_ready
+
     for i in range(TTS_MAX_CONCURRENT):
         asyncio.create_task(tts_worker(i))
-    logger.info(f"启动 {TTS_MAX_CONCURRENT} 个 TTS workers")
+
+    # 等待所有模型加载完成（最多等 120s）
+    # 用健康检查来判断
+    logger.info(f"启动 {TTS_MAX_CONCURRENT} 个 TTS workers（独立模型实例）")
 
 
 # ==========================================
@@ -190,9 +210,10 @@ async def startup():
 async def health():
     """健康检查端点"""
     return {
-        "status": model_status,
+        "status": "ready" if all_models_ready else "loading",
         "queue_size": request_queue.qsize(),
         "workers": TTS_MAX_CONCURRENT,
+        "models_loaded": models_loaded_count,
     }
 
 
@@ -205,9 +226,9 @@ async def tts(request: TTSRequest):
     语音合成端点。
     接收请求 → 放入队列 → 等待 worker 处理 → 返回音频。
     """
-    if model_status != "ready" or model is None:
+    if not all_models_ready:
         return Response(
-            content='{"error": "模型未就绪"}',
+            content='{"error": "模型加载中，请稍后"}',
             media_type="application/json",
             status_code=503,
         )
@@ -251,8 +272,5 @@ async def tts(request: TTSRequest):
 # 启动入口
 # ==========================================
 if __name__ == "__main__":
-    # 启动时加载模型
-    load_model()
-
-    # 启动 FastAPI 服务
+    # 启动 FastAPI 服务（模型由 worker 在 startup 时加载）
     uvicorn.run(app, host="127.0.0.1", port=9233)
