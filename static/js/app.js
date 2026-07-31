@@ -105,8 +105,9 @@ function hideStatus() {
 let currentBotMsg = null;
 let currentBotText = "";
 
-// 音频队列
+// 音频队列 + 文字队列（同步显示）
 let audioQueue = [];
+let textQueue = [];
 let isPlaying = false;
 let ttsEnabled = true;
 
@@ -134,6 +135,16 @@ function playNextAudio() {
     isPlaying = true;
     showAudioWave();
 
+    // 显示对应的文字（文字和音频同步）
+    if (textQueue.length > 0) {
+        var nextText = textQueue.shift();
+        currentBotText += nextText;
+        if (currentBotMsg) {
+            currentBotMsg.textContent = currentBotText;
+        }
+        scrollToBottom();
+    }
+
     const base64Data = audioQueue.shift();
     const audioBytes = Uint8Array.from(atob(base64Data), function(c) { return c.charCodeAt(0); });
     const blob = new Blob([audioBytes], { type: "audio/wav" });
@@ -157,6 +168,7 @@ function toggleTTS() {
     if (btn) btn.textContent = ttsEnabled ? "🔊" : "🔇";
     if (!ttsEnabled) {
         audioQueue = [];
+        textQueue = [];
         isPlaying = false;
         hideAudioWave();
     }
@@ -178,6 +190,7 @@ async function sendMessage() {
     currentBotMsg = appendMessage("bot", "");
     currentBotText = "";
     audioQueue = [];
+    textQueue = [];
     isPlaying = false;
     const cursor = document.createElement("span");
     cursor.className = "typing-cursor";
@@ -241,12 +254,18 @@ function handleSSEEvent(data, cursor) {
 
         case "text":
             hideStatus()
-            currentBotText += data.content;
-            if (currentBotMsg) {
-                currentBotMsg.textContent = currentBotText;
-                if (cursor) currentBotMsg.appendChild(cursor);
+            if (ttsEnabled) {
+                // TTS 开启时，文字进入队列，等音频播放时才显示
+                textQueue.push(data.content);
+            } else {
+                // TTS 关闭时，直接显示文字
+                currentBotText += data.content;
+                if (currentBotMsg) {
+                    currentBotMsg.textContent = currentBotText;
+                    if (cursor) currentBotMsg.appendChild(cursor);
+                }
+                scrollToBottom();
             }
-            scrollToBottom();
             break;
 
         case "mood":
@@ -262,6 +281,16 @@ function handleSSEEvent(data, cursor) {
 
         case "audio_done":
             // 队列会在播完后自动隐藏声波动画
+            // 刷新残余文字（防止 TTS 失败导致文字丢失）
+            if (ttsEnabled && textQueue.length > 0) {
+                while (textQueue.length > 0) {
+                    currentBotText += textQueue.shift();
+                }
+                if (currentBotMsg) {
+                    currentBotMsg.textContent = currentBotText;
+                }
+                scrollToBottom();
+            }
             break;
 
         case "error":

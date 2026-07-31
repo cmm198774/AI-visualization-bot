@@ -144,13 +144,13 @@ async def tts_stream(sentences: list) -> AsyncGenerator:
     tasks = [asyncio.create_task(process_one(i, c))
              for i, c in enumerate(chunks)]
 
-    # 预缓冲：等待前 TTS_PREBUFFER 个 chunk 完成
+    # 预缓冲：等待前 TTS_PREBUFFER 个 chunk 完成（文字和音频一起攒着）
     prebuffer_count = min(TTS_PREBUFFER, len(chunks))
     for i in range(prebuffer_count):
         while buffer[i] is None:
             await asyncio.sleep(0.05)
 
-    # 按序 yield
+    # 预缓冲完成，开始按序 yield（文字和音频同步发送）
     for i, chunk in enumerate(chunks):
         while buffer[i] is None:
             await asyncio.sleep(0.05)
