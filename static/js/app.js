@@ -127,11 +127,13 @@ function hideAudioWave() {
 
 function playNextAudio() {
     if (audioQueue.length === 0) {
+        console.log("[Audio] queue empty, stop playing");
         isPlaying = false;
         hideAudioWave();
         return;
     }
 
+    console.log("[Audio] playNextAudio, audioQueue=" + audioQueue.length + ", textQueue=" + textQueue.length);
     isPlaying = true;
     showAudioWave();
 
@@ -152,14 +154,20 @@ function playNextAudio() {
 
     const audio = new Audio(url);
     audio.onended = function() {
+        console.log("[Audio] ended");
         URL.revokeObjectURL(url);
         playNextAudio();
     };
-    audio.onerror = function() {
+    audio.onerror = function(e) {
+        console.error("[Audio] error:", e);
         URL.revokeObjectURL(url);
         playNextAudio();
     };
-    audio.play();
+    audio.play().then(function() {
+        console.log("[Audio] playing started");
+    }).catch(function(e) {
+        console.error("[Audio] play failed:", e);
+    });
 }
 
 function toggleTTS() {
@@ -257,6 +265,7 @@ function handleSSEEvent(data, cursor) {
             if (ttsEnabled) {
                 // TTS 开启时，文字进入队列，等音频播放时才显示
                 textQueue.push(data.content);
+                console.log("[SSE] text queued, textQueue.length=" + textQueue.length);
             } else {
                 // TTS 关闭时，直接显示文字
                 currentBotText += data.content;
@@ -275,11 +284,13 @@ function handleSSEEvent(data, cursor) {
         case "audio":
             if (ttsEnabled) {
                 audioQueue.push(data.data);
+                console.log("[SSE] audio queued, audioQueue.length=" + audioQueue.length);
                 if (!isPlaying) playNextAudio();
             }
             break;
 
         case "audio_done":
+            console.log("[SSE] audio_done, textQueue=" + textQueue.length + ", audioQueue=" + audioQueue.length);
             // 队列会在播完后自动隐藏声波动画
             // 刷新残余文字（防止 TTS 失败导致文字丢失）
             if (ttsEnabled && textQueue.length > 0) {
