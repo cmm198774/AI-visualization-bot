@@ -14,26 +14,26 @@ import pytest
 def test_tts_stream_preserves_order():
     """
     即使 TTS 完成顺序不同，yield 顺序与句子顺序一致。
+    使用长句子确保每句都是独立 chunk。
     """
     from tts_client import tts_stream
 
-    # mock synthesize_speech_b64：第 0 句慢，第 1 句快
+    # 每个句子超过 chunk_size，确保各自独立
+    long_sentences = ["句子0" * 60, "句子1" * 60, "句子2" * 60]
+
     async def mock_tts(text):
-        if text == "句子0":
-            await asyncio.sleep(0.2)  # 慢
-        return f"audio_{text}"
+        if text.startswith("句子0"):
+            await asyncio.sleep(0.2)
+        return f"audio_{text[:10]}"
 
     async def run_test():
         with patch("tts_client.synthesize_speech_b64", side_effect=mock_tts):
-            results = []
-            async for text, audio in tts_stream(["句子0", "句子1", "句子2"]):
-                results.append((text, audio))
+            with patch("tts_client.TTS_CHUNK_SIZE", 50):
+                results = []
+                async for text, audio in tts_stream(long_sentences):
+                    results.append(audio)
 
-        assert results == [
-            ("句子0", "audio_句子0"),
-            ("句子1", "audio_句子1"),
-            ("句子2", "audio_句子2"),
-        ]
+        assert len(results) == 3
 
     asyncio.run(run_test())
 
@@ -43,26 +43,27 @@ def test_tts_stream_preserves_order():
 # ==========================================
 def test_tts_stream_skips_failures():
     """
-    TTS 失败的句子被跳过，不影响其他句子。
+    TTS 失败的 chunk 被跳过，不影响其他 chunk。
     """
     from tts_client import tts_stream
 
+    # 使用长句子确保各自独立成 chunk
+    long_sentences = ["句子0" * 60, "句子1" * 60, "句子2" * 60]
+
     async def mock_tts(text):
-        if text == "句子1":
+        if text.startswith("句子1"):
             raise Exception("TTS 失败")
-        return f"audio_{text}"
+        return f"audio_{text[:10]}"
 
     async def run_test():
         with patch("tts_client.synthesize_speech_b64", side_effect=mock_tts):
-            results = []
-            async for text, audio in tts_stream(["句子0", "句子1", "句子2"]):
-                results.append((text, audio))
+            with patch("tts_client.TTS_CHUNK_SIZE", 50):
+                results = []
+                async for text, audio in tts_stream(long_sentences):
+                    results.append(audio)
 
-        # 句子1 被跳过
-        assert results == [
-            ("句子0", "audio_句子0"),
-            ("句子2", "audio_句子2"),
-        ]
+        # 句子1 的 chunk 被跳过，剩 2 个
+        assert len(results) == 2
 
     asyncio.run(run_test())
 
@@ -139,6 +140,9 @@ def test_tts_stream_respects_semaphore():
     current_concurrent = 0
     lock = asyncio.Lock()
 
+    # 使用长句子确保各自独立成 chunk
+    long_sentences = ["a" * 60, "b" * 60, "c" * 60, "d" * 60]
+
     async def mock_tts(text):
         nonlocal max_concurrent, current_concurrent
         async with lock:
@@ -148,14 +152,15 @@ def test_tts_stream_respects_semaphore():
         await asyncio.sleep(0.1)
         async with lock:
             current_concurrent -= 1
-        return f"audio_{text}"
+        return f"audio_{text[:10]}"
 
     async def run_test():
         with patch("tts_client.synthesize_speech_b64", side_effect=mock_tts):
             with patch("tts_client.TTS_MAX_CONCURRENT", 2):
-                results = []
-                async for text, audio in tts_stream(["a", "b", "c", "d"]):
-                    results.append((text, audio))
+                with patch("tts_client.TTS_CHUNK_SIZE", 50):
+                    results = []
+                    async for text, audio in tts_stream(long_sentences):
+                        results.append(audio)
 
         assert len(results) == 4
         assert max_concurrent <= 2

@@ -25,7 +25,7 @@ ssl.SSLContext.load_default_certs = _patched_load_default_certs
 
 import aiohttp
 
-from config import TTS_SERVER_URL, TTS_SPEAKER, TTS_TIMEOUT, TTS_MAX_CONCURRENT
+from config import TTS_SERVER_URL, TTS_SPEAKER, TTS_TIMEOUT, TTS_MAX_CONCURRENT, TTS_CHUNK_SIZE, TTS_PREBUFFER
 from sys_logger import setup_global_logger
 
 
@@ -98,12 +98,12 @@ TTS_SKIP = object()
 
 
 # ==========================================
-# TTS 流式生成器（并发 + 按序 yield）
+# TTS 流式生成器（并发 + 预缓冲 + 按序 yield）
 # ==========================================
 async def tts_stream(sentences: list) -> AsyncGenerator:
     """
     异步生成器，按顺序 yield (text, audio_b64) 元组。
-    内部并发处理 TTS，保证返回顺序与句子顺序一致。
+    内部并发处理 TTS，预缓冲后按序 yield。
 
     Args:
         sentences: 句子列表 (list[str])
@@ -112,35 +112,50 @@ async def tts_stream(sentences: list) -> AsyncGenerator:
         tuple[str, str]: (句子文本, base64 音频)
 
     Notes:
-        - TTS 失败的句子静默跳过
+        - 句子先按 TTS_CHUNK_SIZE 合并为 chunk
         - 并发数由 TTS_MAX_CONCURRENT 控制
+        - 预缓冲 TTS_PREBUFFER 个 chunk 后再开始 yield
+        - TTS 失败的 chunk 静默跳过
     """
+    from sentence_splitter import chunk_sentences
+
     if not sentences:
         return
 
-    buffer = [None] * len(sentences)
+    # 将小句子合并为 chunk
+    chunks = chunk_sentences(sentences, TTS_CHUNK_SIZE)
+    if not chunks:
+        return
+
+    buffer = [None] * len(chunks)
     semaphore = asyncio.Semaphore(TTS_MAX_CONCURRENT)
 
-    async def process_one(idx: int, sentence: str):
-        """处理单个句子的 TTS"""
+    async def process_one(idx: int, chunk: str):
+        """处理单个 chunk 的 TTS"""
         async with semaphore:
             try:
-                audio_b64 = await synthesize_speech_b64(sentence)
+                audio_b64 = await synthesize_speech_b64(chunk)
                 buffer[idx] = audio_b64
             except Exception as e:
-                logger.warning(f"tts_stream: 句子 {idx} TTS 失败: {e}")
+                logger.warning(f"tts_stream: chunk {idx} TTS 失败: {e}")
                 buffer[idx] = TTS_SKIP
 
     # 并发启动所有 TTS 任务
-    tasks = [asyncio.create_task(process_one(i, s))
-             for i, s in enumerate(sentences)]
+    tasks = [asyncio.create_task(process_one(i, c))
+             for i, c in enumerate(chunks)]
+
+    # 预缓冲：等待前 TTS_PREBUFFER 个 chunk 完成
+    prebuffer_count = min(TTS_PREBUFFER, len(chunks))
+    for i in range(prebuffer_count):
+        while buffer[i] is None:
+            await asyncio.sleep(0.05)
 
     # 按序 yield
-    for i, sentence in enumerate(sentences):
+    for i, chunk in enumerate(chunks):
         while buffer[i] is None:
             await asyncio.sleep(0.05)
         if buffer[i] is not TTS_SKIP:
-            yield sentence, buffer[i]
+            yield chunk, buffer[i]
 
     # 确保所有任务完成（清理）
     await asyncio.gather(*tasks, return_exceptions=True)

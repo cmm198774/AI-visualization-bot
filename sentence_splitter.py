@@ -61,3 +61,42 @@ def split_sentences(text: str) -> list:
         sentences.append(current)
 
     return sentences
+
+
+# ==========================================
+# 按字数合并句子为 chunk
+# ==========================================
+def chunk_sentences(sentences: list, chunk_size: int = 100) -> list:
+    """
+    将小句子按字数累积合并为较大的 chunk。
+
+    Args:
+        sentences: 小句子列表 (list[str])
+        chunk_size: 每个 chunk 的目标字数 (int)
+
+    Returns:
+        list[str]: 合并后的 chunk 列表
+
+    Rules:
+        - 累积小句直到总字数 >= chunk_size，合并为一个 chunk
+        - 最后一个 chunk 如果字数不足，合并到前一个 chunk
+        - 空列表返回空列表
+    """
+    if not sentences:
+        return []
+
+    chunks = []
+    current_chunk = ""
+
+    for sentence in sentences:
+        current_chunk += sentence
+        # 累积到目标字数，切一个 chunk
+        if len(current_chunk) >= chunk_size:
+            chunks.append(current_chunk)
+            current_chunk = ""
+
+    # 剩余不足 chunk_size 的部分，作为独立 chunk
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks

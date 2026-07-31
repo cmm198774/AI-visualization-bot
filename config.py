@@ -71,5 +71,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 # ==========================================
 TTS_SERVER_URL = os.getenv("TTS_SERVER_URL", "http://127.0.0.1:9233/tts")
 TTS_SPEAKER = os.getenv("TTS_SPEAKER", "中文女")
-TTS_TIMEOUT = int(os.getenv("TTS_TIMEOUT", "10"))
+TTS_TIMEOUT = int(os.getenv("TTS_TIMEOUT", "30"))
 TTS_MAX_CONCURRENT = int(os.getenv("TTS_MAX_CONCURRENT", "3"))
+TTS_CHUNK_SIZE = int(os.getenv("TTS_CHUNK_SIZE", "50"))
+TTS_PREBUFFER = int(os.getenv("TTS_PREBUFFER", "2"))
