@@ -160,8 +160,23 @@ async def lifespan(app: FastAPI):
 # ==========================================
 app = FastAPI(lifespan=lifespan)
 
-# 静态文件
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# 静态文件（开发模式：禁止缓存）
+from starlette.responses import FileResponse as SR
+from starlette.staticfiles import StaticFiles as SF
+
+
+class NoCacheStaticFiles(SF):
+    """开发用静态文件：禁止浏览器缓存"""
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if hasattr(response, "headers"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
 
 
 # ==========================================
