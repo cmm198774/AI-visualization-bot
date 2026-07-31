@@ -262,19 +262,13 @@ function handleSSEEvent(data, cursor) {
 
         case "text":
             hideStatus()
-            if (ttsEnabled) {
-                // TTS 开启时，文字进入队列，等音频播放时才显示
-                textQueue.push(data.content);
-                console.log("[SSE] text queued, textQueue.length=" + textQueue.length);
-            } else {
-                // TTS 关闭时，直接显示文字
-                currentBotText += data.content;
-                if (currentBotMsg) {
-                    currentBotMsg.textContent = currentBotText;
-                    if (cursor) currentBotMsg.appendChild(cursor);
-                }
-                scrollToBottom();
+            // 文字始终立即显示（保持流式体验）
+            currentBotText += data.content;
+            if (currentBotMsg) {
+                currentBotMsg.textContent = currentBotText;
+                if (cursor) currentBotMsg.appendChild(cursor);
             }
+            scrollToBottom();
             break;
 
         case "mood":

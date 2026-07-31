@@ -54,6 +54,46 @@
 - [x] 语音流式输出（逐句文字 + 音频，sentence_splitter 分句）
 - [x] 错误处理（TTS 失败静默降级为文本）
 - [x] 前端音频播放（队列 + 声波动画 + 🔊 开关）
+- [x] tts_server 重写（多 worker 独立模型实例 + 信号量并发控制）
+- [x] tts_client 新增 tts_stream()（chunk_sentences 合并 + 并发合成 + 预缓冲 + 有序输出）
+- [x] CosyVoice 离线模式（MODELSCOPE_OFFLINE=true 跳过 ModelScope 下载）
+- [x] 浏览器缓存修复（NoCacheStaticFiles 类）
+- [ ] **TTS 流畅度优化（进行中，见下方详细记录）**
+
+### TTS 流畅度优化记录（2026-07-31）
+
+**目标**：消除句子之间的语音停顿，实现流畅播放。
+
+**架构改造**：
+- tts_server：每个 worker 加载独立 CosyVoice 模型，通过 asyncio.Queue 接收请求 + asyncio.Semaphore 控制 GPU 并发
+- tts_client.tts_stream()：分句 → chunk_sentences 合并小句 → 并发合成 → 预缓冲 → 有序 yield
+- 解决了共享模型 50% 失败率（inference_sft 非线程安全）
+
+**测试数据**：
+
+| chunk_size | workers | 并发模型 | 失败率 | chunk 间隔 |
+|---|---|---|---|---|
+| 50字 | 3 | 共享 | 0% | ~20s |
+| 50字 | 6 | 共享 | 50% | — |
+| 50字 | 6 | 独立 | 55% | — |
+| 50字 | 3 | 独立 | 0% | ~20s |
+| 150字 | 3 | 独立 | 超时 | 89.8s/chunk |
+| 80字 | 3 | 独立 | 0% | 4-14s |
+| 80字 | 2 | 独立 | 0% | 4-14s |
+| 80字 | 2, prebuffer=4 | 独立 | 0% | 0-14s（仍有大间隔） |
+
+**根本问题**：
+- GPU 串行瓶颈：即使 2 个 worker 各自持有独立模型，GPU 仍串行处理推理（PyTorch/CUDA 限制）
+- 生成速度 ≈ 播放速度：80字/chunk → 生成 ~27s ≈ 播放 ~27s
+- 预缓冲只能延迟开始播放，不能解决持续生成追不上播放的问题
+
+**当前配置**：TTS_MAX_CONCURRENT=2, TTS_CHUNK_SIZE=40（刚改为 40，未测试）, TTS_PREBUFFER=4, TTS_TIMEOUT=45
+
+**待测试方向**：
+1. chunk_size=40：每个 chunk ~13s 生成/播放，2 worker 平均每 6.5s 产出一个，理论可追上
+2. 更多 worker（3-4 个）：之前 6 个 55% 失败，但 3-4 个或许可行
+3. 换 TTS 引擎：CosyVoice 本身慢，可考虑 edge-tts（云端，免费，速度快）
+4. 模型推理优化：FP16、JIT、TensorRT（CosyVoice 支持但需配置）
 
 ### Phase 3: Live2D 虚拟形象
 - [ ] Live2D 集成（pixi-live2d-display）
@@ -70,9 +110,8 @@
 ├── commands.py            # 命令处理模块（/clear, /compact, /status, /mood, /help）
 ├── memory_utils.py        # 消息压缩工具（compact_messages 函数，供 agent 和 commands 共用）
 ├── sentence_splitter.py   # 中文分句工具（按标点拆句，供 TTS 逐句输出）
-├── test_sentence_splitter.py # 分句单元测试（9 个用例）
-├── tts_client.py          # TTS 客户端（aiohttp 异步调用 TTS 服务，含 Windows SSL 修复）
-├── tts_server.py          # TTS 独立服务（封装 CosyVoice-300M-SFT，端口 9233）
+├── tts_client.py          # TTS 客户端（edge-tts 云端合成 + tts_stream 流式合成 + 预缓冲）
+├── tts_server.py          # TTS 独立服务（多 worker 独立模型 + 信号量并发，端口 9233）
 ├── tools.py               # Qdrant RAG 工具（get_info_from_local_db）
 ├── config.py              # 配置加载（从 .env 读取）
 ├── database.py            # SQLite 用户数据库（users 表）
@@ -80,8 +119,6 @@
 ├── sys_logger.py          # 全局日志系统（终端 + 文件双输出）
 ├── sys_memory.py          # RedisSaver（LangGraph checkpoint 持久化 + 命令系统方法）
 ├── start_redis.py         # Redis 服务器管理（启动/停止）
-├── test_chat.py           # 测试脚本（SSE 流式聊天）
-├── test_commands_manual.py # 命令系统手动测试脚本
 ├── users.db               # SQLite 用户数据库文件（运行时生成）
 │
 ├── static/                # 前端文件
@@ -97,10 +134,20 @@
 ├── logs/                  # 日志目录（运行时生成）
 │   └── global.log         # 全局日志文件
 │
-├── tests/                 # 测试文件
-│   ├── test_error_handling.py
-│   ├── test_latency.py
-│   └── test_logging_integration.py
+├── tests/                 # 测试文件（所有测试必须放在此目录）
+│   ├── test_chat.py               # SSE 流式聊天测试
+│   ├── test_commands_manual.py    # 命令系统手动测试
+│   ├── test_e2e.py                # 端到端测试
+│   ├── test_e2e_real.py           # 端到端 TTS 测试（24 chunk 长文本）
+│   ├── test_error_handling.py     # 错误处理测试
+│   ├── test_latency.py            # 延迟测试
+│   ├── test_logging_integration.py # 日志集成测试
+│   ├── test_sentence_splitter.py  # 分句单元测试（9 个用例）
+│   ├── test_server.py             # 服务器测试
+│   ├── test_single.py             # 单句 TTS 计时测试
+│   ├── test_stress.py             # 多用户压力测试（3 用户 × 8 请求）
+│   ├── test_tts_server.py         # TTS 服务端单元测试（6 个用例）
+│   └── test_tts_stream.py         # tts_stream 单元测试（6 个用例）
 │
 └── docs/                  # 文档
     ├── custom/
@@ -119,6 +166,10 @@
         └── phase1-test-report.md           # Phase 1 测试报告
 ```
 
+## 开发规范
+
+- **测试文件必须放在 `tests/` 目录下**，不得在项目根目录创建 `test_*.py` 文件。根目录只放业务代码和配置文件。
+
 ## 运行方式
 ```bash
 # 终端 1：启动 TTS 服务（可选，不开则文字正常但无语音）
@@ -133,6 +184,11 @@ conda run -n py310 python server.py
 - `MAX_CHECKPOINTS=5`: Redis 最大 checkpoint 数
 - LLM 超时: 60 秒
 - 工具超时: 20 秒
+- `TTS_MAX_CONCURRENT=2`: TTS worker 数（每个加载独立模型）
+- `TTS_CHUNK_SIZE=40`: 每 chunk 目标字数（影响生成/播放平衡）
+- `TTS_PREBUFFER=4`: 预缓冲 chunk 数（播放前等待 N 个 chunk 就绪）
+- `TTS_TIMEOUT=45`: TTS 单次合成超时（秒）
+- `MODELSCOPE_OFFLINE=true`: 跳过 ModelScope 在线检查（离线加载模型）
 
 ## 已知问题
 - astream_events 抛出 NotImplementedError，使用 ainvoke + 回调替代
@@ -142,6 +198,9 @@ conda run -n py310 python server.py
 - NumPy 版本冲突：CosyVoice 依赖 `pyworld` 需要 NumPy 1.x，已降级到 `numpy==1.26.4`
 - CosyVoice2-0.5B 是基座模型，`inference_sft` 无内置音色。实际使用 `CosyVoice-300M-SFT`（内置"中文女"/"中文男"等音色）
 - pip SSL 全局修复：`export SSL_CERT_FILE="C:/ProgramData/Anaconda3/envs/py310/lib/site-packages/certifi/cacert.pem"`
+- TTS 句子间停顿：CosyVoice 生成速度 ≈ 播放速度，GPU 串行处理是根本瓶颈。正在尝试 chunk_size=40 + prebuffer=4 优化
+- TTS 多 worker 失败率：6 个独立模型 worker 会 55% 失败（GPU 资源不足），2 个 worker 稳定但并发有限
+- CosyVoice 模型加载慢：每个 worker 加载约 15s，启动时所有 worker 并行加载
 
 ## Agent 流程图
 ```

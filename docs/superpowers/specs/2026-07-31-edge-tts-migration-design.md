@@ -103,7 +103,7 @@ async def synthesize_speech(text: str) -> bytes:
 ### 保留
 
 - `TTS_CHUNK_SIZE`：继续用于 chunk 合并，初始值保持 40
-- `TTS_PREBUFFER`：继续用于预缓冲，值改为 2（云端合成极快，2 个 chunk 缓冲足够应对网络波动）
+- `TTS_PREBUFFER`：继续用于预缓冲，值保持 4
 
 ## 前端改动（app.js）
 
@@ -123,7 +123,7 @@ const blob = new Blob([audioBytes], { type: "audio/mpeg" });
 |------|-------------------|------------------|
 | 单句合成延迟 | ~13-27s（GPU 推理） | ~0.5-2s（云端 API） |
 | 并发限制 | GPU 串行，2 worker 极限 | 无 GPU 限制，取决于网络带宽 |
-| 首句响应 | 等 prebuffer 4 chunks | prebuffer 降到 2，更快开始播放 |
+| 首句响应 | 等 prebuffer 4 chunks | 同样 prebuffer 4，但因合成极快，实际等待时间大幅缩短 |
 | 句子间停顿 | 4-14s（生成追不上播放） | 几乎无停顿（生成远快于播放） |
 | 资源占用 | GPU 显存 ~2GB/worker | 零本地资源 |
 | 启动时间 | 每个 worker 加载模型 ~15s | 无需加载，即开即用 |
