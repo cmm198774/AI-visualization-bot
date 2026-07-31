@@ -1,7 +1,7 @@
 """
 TTS 独立服务模块
 封装 CosyVoice-300M-SFT 模型，提供 HTTP API 进行语音合成。
-使用请求队列 + 单 worker 架构，保证 GPU 推理串行安全。
+使用请求队列 + 多 Worker 并发架构，充分利用 GPU 算力。
 启动方式: python tts_server.py
 端口: 9233
 """
@@ -18,6 +18,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 import uvicorn
 
+from config import TTS_MAX_CONCURRENT
 from sys_logger import setup_global_logger
 
 
@@ -121,6 +122,7 @@ def run_inference(text: str, speaker: str) -> bytes:
 # TTS 请求队列 & Job
 # ==========================================
 request_queue = asyncio.Queue()
+semaphore = asyncio.Semaphore(TTS_MAX_CONCURRENT)
 
 
 class TTSJob:
@@ -132,24 +134,25 @@ class TTSJob:
 
 
 # ==========================================
-# 后台 worker（串行处理 TTS 请求）
+# 后台 Worker（多 Worker 并发，信号量控制 GPU 占用）
 # ==========================================
-async def tts_worker():
+async def tts_worker(worker_id: int):
     """
     后台 worker 协程。
-    从 request_queue 中逐个取出请求，串行调用 run_inference。
-    用 asyncio.to_thread() 避免阻塞事件循环。
+    从 request_queue 中逐个取出请求，通过信号量控制 GPU 并发数。
+    多个 worker 同时运行，但同时最多 TTS_MAX_CONCURRENT 个在执行推理。
     """
-    logger.info("TTS worker 启动")
+    logger.info(f"TTS worker #{worker_id} 启动")
     while True:
         job = await request_queue.get()
         try:
-            logger.info(f"TTS worker 处理: text={job.text[:20]}...")
-            wav_bytes = await asyncio.to_thread(run_inference, job.text, job.speaker)
+            async with semaphore:
+                logger.info(f"Worker #{worker_id} 处理: text={job.text[:20]}...")
+                wav_bytes = await asyncio.to_thread(run_inference, job.text, job.speaker)
             if not job.future.done():
                 job.future.set_result(wav_bytes)
         except Exception as e:
-            logger.error(f"TTS worker 错误: {e}")
+            logger.error(f"Worker #{worker_id} 错误: {e}")
             if not job.future.done():
                 job.future.set_exception(e)
 
@@ -170,12 +173,14 @@ app = FastAPI(title="Lisa TTS Service")
 
 
 # ==========================================
-# 启动时创建 worker
+# 启动时创建多个 Worker
 # ==========================================
 @app.on_event("startup")
 async def startup():
-    """启动时创建后台 TTS worker"""
-    asyncio.create_task(tts_worker())
+    """启动时创建 TTS_MAX_CONCURRENT 个后台 worker"""
+    for i in range(TTS_MAX_CONCURRENT):
+        asyncio.create_task(tts_worker(i))
+    logger.info(f"启动 {TTS_MAX_CONCURRENT} 个 TTS workers")
 
 
 # ==========================================
@@ -187,6 +192,7 @@ async def health():
     return {
         "status": model_status,
         "queue_size": request_queue.qsize(),
+        "workers": TTS_MAX_CONCURRENT,
     }
 
 

@@ -1,5 +1,5 @@
 """
-tts_server 请求队列 + worker 测试
+tts_server 请求队列 + 多 Worker 并发测试
 """
 import asyncio
 import pytest
@@ -30,12 +30,12 @@ def test_run_inference_exists():
 
 
 # ==========================================
-# 测试请求队列机制（用 mock 模型）
+# 测试请求队列机制（FIFO）
 # ==========================================
 def test_request_queue_ordering():
     """
     多个请求按 FIFO 顺序处理。
-    用 mock 模型测试队列机制，不依赖真实 GPU。
+    不依赖真实 GPU。
     """
     from tts_server import request_queue
 
@@ -73,9 +73,58 @@ def test_request_queue_ordering():
 
 
 # ==========================================
-# 测试 tts_worker 函数存在
+# 测试 tts_worker 函数存在且接受 worker_id
 # ==========================================
-def test_tts_worker_exists():
-    """tts_worker 协程函数已定义"""
+def test_tts_worker_signature():
+    """tts_worker 协程函数接受 worker_id 参数"""
     from tts_server import tts_worker
+    import inspect
     assert asyncio.iscoroutinefunction(tts_worker)
+    sig = inspect.signature(tts_worker)
+    assert "worker_id" in sig.parameters
+
+
+# ==========================================
+# 测试信号量存在且值正确
+# ==========================================
+def test_semaphore_exists():
+    """信号量已创建，值为 TTS_MAX_CONCURRENT"""
+    from tts_server import semaphore
+    from config import TTS_MAX_CONCURRENT
+    assert isinstance(semaphore, asyncio.Semaphore)
+    assert semaphore._value == TTS_MAX_CONCURRENT
+
+
+# ==========================================
+# 测试信号量限制并发数
+# ==========================================
+def test_semaphore_limits_concurrency():
+    """信号量确实限制了同时进行的任务数"""
+    from tts_server import semaphore
+    from config import TTS_MAX_CONCURRENT
+
+    loop = asyncio.new_event_loop()
+    max_concurrent = 0
+    current_concurrent = 0
+    lock = asyncio.Lock()
+
+    async def worker_task():
+        nonlocal max_concurrent, current_concurrent
+        async with semaphore:
+            async with lock:
+                current_concurrent += 1
+                if current_concurrent > max_concurrent:
+                    max_concurrent = current_concurrent
+            await asyncio.sleep(0.1)
+            async with lock:
+                current_concurrent -= 1
+
+    async def run_test():
+        tasks = [asyncio.create_task(worker_task()) for _ in range(6)]
+        await asyncio.gather(*tasks)
+
+    loop.run_until_complete(run_test())
+    loop.close()
+
+    # 最大并发数不应超过 TTS_MAX_CONCURRENT
+    assert max_concurrent <= TTS_MAX_CONCURRENT
