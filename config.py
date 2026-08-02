@@ -3,7 +3,26 @@
 从 .env 文件加载所有 API 密钥和服务配置
 """
 import os
+import ssl
 from dotenv import load_dotenv
+
+
+# ==========================================
+# Windows SSL 证书加载 bug 修复（全局）
+# aiohttp 导入时会调用 ssl.create_default_context()，
+# Windows 下 _load_windows_store_certs 可能抛出 NOT_ENOUGH_DATA，
+# 改为使用 certifi 的 CA 证书包。
+# 此 patch 对所有依赖 aiohttp 的模块生效（如 edge-tts）。
+# ==========================================
+_orig_load_default_certs = ssl.SSLContext.load_default_certs
+
+
+def _patched_load_default_certs(self, purpose=ssl.Purpose.SERVER_AUTH):
+    import certifi
+    self.load_verify_locations(certifi.where())
+
+
+ssl.SSLContext.load_default_certs = _patched_load_default_certs
 
 
 # 加载 .env 文件
@@ -67,11 +86,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 
 
 # ==========================================
-# TTS 服务配置
+# TTS 配置（edge-tts 云端合成）
 # ==========================================
-TTS_SERVER_URL = os.getenv("TTS_SERVER_URL", "http://127.0.0.1:9233/tts")
-TTS_SPEAKER = os.getenv("TTS_SPEAKER", "中文女")
-TTS_TIMEOUT = int(os.getenv("TTS_TIMEOUT", "45"))
-TTS_MAX_CONCURRENT = int(os.getenv("TTS_MAX_CONCURRENT", "2"))
+EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
 TTS_CHUNK_SIZE = int(os.getenv("TTS_CHUNK_SIZE", "40"))
 TTS_PREBUFFER = int(os.getenv("TTS_PREBUFFER", "4"))
