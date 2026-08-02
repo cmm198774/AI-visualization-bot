@@ -149,7 +149,7 @@ function playNextAudio() {
 
     const base64Data = audioQueue.shift();
     const audioBytes = Uint8Array.from(atob(base64Data), function(c) { return c.charCodeAt(0); });
-    const blob = new Blob([audioBytes], { type: "audio/wav" });
+    const blob = new Blob([audioBytes], { type: "audio/mpeg" });
     const url = URL.createObjectURL(blob);
 
     const audio = new Audio(url);
