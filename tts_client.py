@@ -1,6 +1,6 @@
 """
 TTS 客户端模块
-调用独立 TTS 服务进行语音合成。
+使用 edge-tts 进行云端语音合成。
 """
 import asyncio
 import base64
@@ -9,9 +9,8 @@ from typing import AsyncGenerator
 
 # ==========================================
 # Windows SSL 证书加载 bug 修复
-# aiohttp 导入时会调用 ssl.create_default_context()，
-# Windows 下 _load_windows_store_certs 可能抛出 NOT_ENOUGH_DATA，
-# 改为使用 certifi 的 CA 证书包。
+# edge-tts 内部依赖 aiohttp，导入时触发 SSL bug。
+# 必须在 import edge_tts 之前 patch。
 # ==========================================
 _orig_load_default_certs = ssl.SSLContext.load_default_certs
 
@@ -23,9 +22,9 @@ def _patched_load_default_certs(self, purpose=ssl.Purpose.SERVER_AUTH):
 
 ssl.SSLContext.load_default_certs = _patched_load_default_certs
 
-import aiohttp
+import edge_tts
 
-from config import TTS_SERVER_URL, TTS_SPEAKER, TTS_TIMEOUT, TTS_MAX_CONCURRENT, TTS_CHUNK_SIZE, TTS_PREBUFFER
+from config import EDGE_TTS_VOICE, TTS_CHUNK_SIZE, TTS_PREBUFFER
 from sys_logger import setup_global_logger
 
 
@@ -36,42 +35,35 @@ logger = setup_global_logger()
 
 
 # ==========================================
-# 调用 TTS 服务
+# 调用 edge-tts 云端合成语音
 # ==========================================
 async def synthesize_speech(text: str) -> bytes:
     """
-    调用 TTS 服务，将文本合成为语音。
+    调用 edge-tts 云端合成语音。
 
     Args:
         text: 要合成的文本 (str)
 
     Returns:
-        bytes: WAV 格式音频数据
+        bytes: MP3 格式音频数据
 
     Raises:
-        Exception: TTS 服务不可用、超时或返回错误时抛出
+        Exception: 合成失败时抛出
     """
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                TTS_SERVER_URL,
-                json={"text": text, "speaker": TTS_SPEAKER},
-                timeout=aiohttp.ClientTimeout(total=TTS_TIMEOUT),
-            ) as resp:
-                if resp.status == 200:
-                    audio_bytes = await resp.read()
-                    logger.debug(f"TTS 合成完成: text={text[:20]}..., size={len(audio_bytes)} bytes")
-                    return audio_bytes
-                raise Exception(f"TTS 服务返回状态码 {resp.status}")
-    except aiohttp.ClientError as e:
-        logger.warning(f"TTS 服务连接失败: {e}")
-        raise
-    except TimeoutError:
-        logger.warning(f"TTS 服务超时 ({TTS_TIMEOUT}s): text={text[:20]}...")
-        raise
-    except Exception as e:
-        logger.warning(f"TTS 合成失败: {e}")
-        raise
+    if not text or not text.strip():
+        raise ValueError("文本不能为空")
+
+    communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
+    audio_bytes = b""
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_bytes += chunk["data"]
+
+    if not audio_bytes:
+        raise RuntimeError("edge-tts 合成失败：无音频输出")
+
+    logger.debug(f"TTS 合成完成: text={text[:20]}..., size={len(audio_bytes)} bytes")
+    return audio_bytes
 
 
 # ==========================================
@@ -79,13 +71,13 @@ async def synthesize_speech(text: str) -> bytes:
 # ==========================================
 async def synthesize_speech_b64(text: str) -> str:
     """
-    调用 TTS 服务，返回 base64 编码的音频数据。
+    调用 edge-tts 合成语音，返回 base64 编码的音频数据。
 
     Args:
         text: 要合成的文本 (str)
 
     Returns:
-        str: base64 编码的 WAV 音频字符串
+        str: base64 编码的 MP3 音频字符串
     """
     audio_bytes = await synthesize_speech(text)
     return base64.b64encode(audio_bytes).decode("utf-8")
@@ -113,7 +105,6 @@ async def tts_stream(sentences: list) -> AsyncGenerator:
 
     Notes:
         - 句子先按 TTS_CHUNK_SIZE 合并为 chunk
-        - 并发数由 TTS_MAX_CONCURRENT 控制
         - 预缓冲 TTS_PREBUFFER 个 chunk 后再开始 yield
         - TTS 失败的 chunk 静默跳过
     """
@@ -128,29 +119,27 @@ async def tts_stream(sentences: list) -> AsyncGenerator:
         return
 
     buffer = [None] * len(chunks)
-    semaphore = asyncio.Semaphore(TTS_MAX_CONCURRENT)
 
     async def process_one(idx: int, chunk: str):
         """处理单个 chunk 的 TTS"""
-        async with semaphore:
-            try:
-                audio_b64 = await synthesize_speech_b64(chunk)
-                buffer[idx] = audio_b64
-            except Exception as e:
-                logger.warning(f"tts_stream: chunk {idx} TTS 失败: {e}")
-                buffer[idx] = TTS_SKIP
+        try:
+            audio_b64 = await synthesize_speech_b64(chunk)
+            buffer[idx] = audio_b64
+        except Exception as e:
+            logger.warning(f"tts_stream: chunk {idx} TTS 失败: {e}")
+            buffer[idx] = TTS_SKIP
 
     # 并发启动所有 TTS 任务
     tasks = [asyncio.create_task(process_one(i, c))
              for i, c in enumerate(chunks)]
 
-    # 预缓冲：等待前 TTS_PREBUFFER 个 chunk 完成（文字和音频一起攒着）
+    # 预缓冲：等待前 TTS_PREBUFFER 个 chunk 完成
     prebuffer_count = min(TTS_PREBUFFER, len(chunks))
     for i in range(prebuffer_count):
         while buffer[i] is None:
             await asyncio.sleep(0.05)
 
-    # 预缓冲完成，开始按序 yield（文字和音频同步发送）
+    # 预缓冲完成，开始按序 yield
     for i, chunk in enumerate(chunks):
         while buffer[i] is None:
             await asyncio.sleep(0.05)
