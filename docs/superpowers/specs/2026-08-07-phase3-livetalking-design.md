@@ -110,36 +110,52 @@
 
 ### 3.1 LiveTalking 部署
 
-**部署方式**：Docker（推荐）
+**部署方式**：Docker（自建镜像，CUDA 12.8）
 
-**硬件要求**：
-- GPU：NVIDIA 16GB+ VRAM（已确认用户满足）
-- RAM：16GB+
-- 磁盘：100GB（模型文件较大）
-- CUDA：12.0+
+**用户硬件**：
+- GPU：NVIDIA RTX 5090D（Blackwell 架构，32GB VRAM，sm_120）
+- RAM：16GB+（已确认）
+- 磁盘：100GB+（模型文件较大）
 
-**Docker 镜像**：
-```bash
-# 官方镜像（含 CUDA 12.4 + Python 3.12 + 所有依赖）
-docker pull <livetalking镜像>
-```
+**LiveTalking 官方支持状态**：
+- ✅ 官方最新测试环境：Ubuntu 22.04 / Python 3.12 / **PyTorch 2.9.1 / CUDA 12.8**
+- ✅ 已适配 RTX 5090 等新架构 GPU
+- ✅ 官方 GitHub 仓库提供 Dockerfile：`https://github.com/lipku/LiveTalking/blob/main/Dockerfile`
 
-**启动命令**：
-```bash
-docker run --gpus all \
-  -p 8010:8010 \
-  -v ./livetalking_data:/root/livetalking/data \
-  livetalking-image \
-  python app.py --transport webrtc --model musetalk --listenport 8010
-```
+**部署步骤**：
+
+1. **克隆 LiveTalking 仓库**：
+   ```bash
+   git clone https://github.com/lipku/LiveTalking.git
+   cd LiveTalking
+   ```
+
+2. **构建 Docker 镜像**（使用官方 Dockerfile）：
+   ```bash
+   docker build -t livetalking:cuda12.8 .
+   ```
+
+3. **启动容器**：
+   ```bash
+   docker run --gpus all \
+     -p 8010:8010 \
+     -v ./livetalking_data:/root/livetalking/data \
+     livetalking:cuda12.8 \
+     python app.py --transport webrtc --model musetalk --listenport 8010
+   ```
 
 **模型选择**：
-- **MuseTalk**（推荐）：显存 ~5GB，质量高
+- **MuseTalk**（推荐）：显存 ~5GB，质量高，适合 RTX 5090D
 - 备选：Wav2Lip（显存 ~2GB，质量较低）
 
 **端口**：
 - 8010：HTTP API + WebSocket
 - WebRTC：动态端口（P2P 连接）
+
+**参考资源**：
+- 官方文档（新版）：https://doc.livetalking.ai/en/docs/docker/
+- 官方文档（ReadTheDocs）：https://livetalking-doc.readthedocs.io/zh-cn/latest/docker.html
+- AutoDL 镜像：https://www.codewithgpu.com/i/lipku/livetalking/base
 
 ### 3.2 LiveTalking API 接口
 
@@ -289,14 +305,17 @@ docker run --gpus all \
 **风险 1：Docker GPU 支持问题**
 - 可能原因：NVIDIA Container Toolkit 未安装或配置错误
 - 缓解：先运行 `docker run --gpus all nvidia-smi` 验证
+- 状态：⚠️ 需要在实施时确认
 
 **风险 2：WebRTC 连接失败**
 - 可能原因：P2P 连接被防火墙或 NAT 阻断
 - 缓解：配置 TURN 服务器，或使用 WebSocket 降级方案
+- 状态：⚠️ 需要在实施时确认
 
 **风险 3：MuseTalk 显存不足**
-- 可能原因：16GB 显存不够（虽然理论上足够）
-- 缓解：切换到 Wav2Lip（只需 2GB）
+- 可能原因：理论上 32GB VRAM 足够，但可能有显存泄漏
+- 缓解：切换到 Wav2Lip（只需 2GB），或重启容器
+- 状态：✅ 低风险（RTX 5090D 32GB VRAM 充足）
 
 **风险 4：延迟过高**
 - 可能原因：全链路（TTS + 口型渲染）延迟超过 3 秒
@@ -304,6 +323,12 @@ docker run --gpus all \
   - 优化 TTS 模型（用更轻量的 TTS）
   - 减少渲染分辨率
   - 如果延迟无法接受，考虑回退到 Live2D 方案
+- 状态：⚠️ 需要在 Demo 阶段验证
+
+**已消除的风险：RTX 5090D 兼容性问题**
+- 之前担忧：RTX 5090D 是 Blackwell 架构（sm_120），旧版 PyTorch 不支持
+- 现状：LiveTalking 官方已升级到 CUDA 12.8 + PyTorch 2.9.1，完全兼容
+- 状态：✅ 已解决
 
 ---
 
