@@ -75,9 +75,15 @@
 | 项目 | 路径 |
 |---|---|
 | LiveTalking 代码 | `G:\JupyterProject\LiveTalking\` |
+| LiveTalking GitHub | `git@github.com:cmm198774/LiveTalking-Local-Modified.git` |
 | 模型文件 | `G:\JupyterProject\LiveTalking\models\`（musetalkV15、sd-vae、whisper、dwpose、face-parse-bisent） |
 | 数字人素材 | `G:\JupyterProject\LiveTalking\data\avatars\musetalk_avatar1\` |
 | 测试脚本 | `tests/test_livetalking_py310.py` |
+
+**大文件百度网盘**（模型 4.6GB + 素材 336MB）：
+- 链接：https://pan.baidu.com/s/1uokpYFLX23zebEv0PbJ46Q 提取码: 26a5
+- `models_all.zip` → 解压到 `models/` 目录
+- `avatar_data.zip` → 解压到 `data/avatars/musetalk_avatar1/`
 
 #### Phase 3b：server.py 改造 ✅
 - [x] 移除 edge-tts 相关代码（删除 tts_client.py、sentence_splitter.py）
@@ -99,9 +105,20 @@
 - [x] 发消息验证：SSE 文字回复正常，`sendToLiveTalking()` 调用 `/human` 触发数字人说话
 - [x] **已知问题**: `sendToLiveTalking()` 使用 `interrupt: true`，快速连续对话时数字人会被打断
 
+**前端按钮改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `static/index.html` | 新增 `.avatar-controls` 控制栏（开始/结束按钮 + 状态标签） |
+| `static/js/app.js` | 新增 `_resetLiveTalking()`、`startLiveTalking()`、`stopLiveTalking()`、`updateAvatarButtons()` |
+| `static/css/style.css` | 新增按钮样式（`.btn-start` 绿色 / `.btn-stop` 红色）+ `.avatar-status` 状态标签 |
+
 #### Phase 3d：Lisa 形象定制（待开始）
 - [ ] 需要生成 Lisa 数字人照片
 - [ ] 创建 Lisa 专属 avatar_id
+
+#### Phase 3f：自动连接优化（待讨论）
+- [ ] 去掉手动开始/结束按钮，实现自动连接
+- [ ] 方案待定：页面加载时自动连接 / 用户首次发消息时自动连接
 
 #### Phase 3e：LiveTalking 稳定性修复 ✅（2026-08-10）
 
