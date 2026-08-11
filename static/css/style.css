@@ -76,7 +76,7 @@ body {
 }
 
 /* ==========================================
-   Avatar 区域
+   Avatar 视频区域 (Phase 3: LiveTalking)
    ========================================== */
 .avatar-section {
     flex: 1.2;
@@ -99,15 +99,86 @@ body {
     color: #8b949e;
     font-size: 14px;
     background: #fff;
+    position: relative;
+    overflow: hidden;
 }
 
-.avatar-placeholder {
+/* 视频流样式 */
+.avatar-area video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 14px;
+}
+
+/* 占位符（连接中/失败时显示） */
+.avatar-area .avatar-placeholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    z-index: 1;
     text-align: center;
 }
 
 .avatar-placeholder .icon {
     font-size: 64px;
     margin-bottom: 12px;
+}
+
+/* 控制按钮（开始/结束） */
+.avatar-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.btn-avatar {
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-start {
+    background: #10b981;
+    color: #fff;
+}
+
+.btn-start:hover {
+    background: #059669;
+}
+
+.btn-stop {
+    background: #ef4444;
+    color: #fff;
+}
+
+.btn-stop:hover {
+    background: #dc2626;
+}
+
+.avatar-status {
+    font-size: 13px;
+    color: #9ca3af;
+    padding: 4px 12px;
+    border-radius: 12px;
+    background: #f3f4f6;
+}
+
+.avatar-status.connected {
+    color: #10b981;
+    background: #ecfdf5;
 }
 
 .mood-indicator {
@@ -122,35 +193,6 @@ body {
 .mood-indicator .emoji {
     font-size: 18px;
     margin-right: 6px;
-}
-
-/* 语音波形动画 */
-.audio-wave {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    margin-top: 16px;
-    height: 30px;
-}
-
-.audio-wave .bar {
-    width: 4px;
-    background: rgba(79, 140, 255, 0.6);
-    border-radius: 2px;
-    animation: wave 1.2s ease-in-out infinite;
-}
-
-.audio-wave .bar:nth-child(1) { height: 10px; animation-delay: 0s; }
-.audio-wave .bar:nth-child(2) { height: 20px; animation-delay: 0.1s; }
-.audio-wave .bar:nth-child(3) { height: 15px; animation-delay: 0.2s; }
-.audio-wave .bar:nth-child(4) { height: 25px; animation-delay: 0.3s; }
-.audio-wave .bar:nth-child(5) { height: 12px; animation-delay: 0.4s; }
-.audio-wave .bar:nth-child(6) { height: 18px; animation-delay: 0.5s; }
-.audio-wave .bar:nth-child(7) { height: 8px; animation-delay: 0.6s; }
-
-@keyframes wave {
-    0%, 100% { transform: scaleY(1); }
-    50% { transform: scaleY(0.4); }
 }
 
 /* ==========================================
@@ -279,21 +321,4 @@ body {
 .chat-messages::-webkit-scrollbar-thumb {
     background: #d1d5db;
     border-radius: 2px;
-}
-
-/* ==========================================
-   TTS 语音开关按钮
-   ========================================== */
-#tts-toggle {
-    background: none;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 6px 10px;
-    cursor: pointer;
-    font-size: 18px;
-    transition: background 0.2s;
-}
-
-#tts-toggle:hover {
-    background: #f0f0f0;
 }

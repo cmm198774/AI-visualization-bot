@@ -4,28 +4,287 @@
 const token = localStorage.getItem("token");
 const username = localStorage.getItem("username");
 
-// 严格检查：token 和 username 都必须存在且不为空
 if (!token || !username || username === "undefined" || username === "null") {
-    // 清除无效数据，跳转到登录页
     localStorage.removeItem("token");
     localStorage.removeItem("username");
     window.location.href = "/static/login.html";
 }
 
-// 显示用户名
 const usernameDisplay = document.getElementById("username-display");
 if (usernameDisplay) {
     usernameDisplay.textContent = username;
 }
 
-// 用户 ID 使用用户名
 const userId = username;
 
 
 /* ==========================================
-   退出登录
+   LiveTalking WebRTC 管理
+   ========================================== */
+const LIVETALKING_URL = "http://localhost:8010";
+
+let pc = null;
+let livetalkingReady = false;
+let livetalkingSessionId = "0";
+
+// 文字缓冲：收集 SSE 文字 chunk，按句拆分发给 LiveTalking
+let pendingText = "";
+let textSendTimer = null;
+const TEXT_SEND_DELAY = 500; // 500ms 无新 chunk 就发送
+
+// 句子队列：按顺序发送，每句间隔 1 秒
+let sentenceQueue = [];
+let isSendingSentence = false;
+const SENTENCE_INTERVAL = 1000; // 每句间隔 1 秒
+
+
+/* ==========================================
+   关闭现有 WebRTC 连接（登出/结束按钮时调用）
+   ========================================== */
+function closeLiveTalking() {
+    console.log("[LiveTalking] closing connection...");
+    livetalkingReady = false;
+
+    if (pc) {
+        pc.close();
+        pc = null;
+    }
+
+    const video = document.getElementById("livetalking-video");
+    if (video) video.srcObject = null;
+
+    // 恢复占位符
+    const placeholder = document.getElementById("avatar-placeholder");
+    if (placeholder) {
+        placeholder.style.display = "flex";
+    }
+
+    // 恢复按钮状态：显示「开始」，隐藏「结束」
+    updateAvatarButtons(false);
+}
+
+
+/* ==========================================
+   更新控制按钮显示状态
+   ========================================== */
+function updateAvatarButtons(connected) {
+    var startBtn = document.getElementById("start-btn");
+    var stopBtn = document.getElementById("stop-btn");
+    var statusEl = document.getElementById("avatar-status");
+    if (connected) {
+        if (startBtn) startBtn.style.display = "none";
+        if (stopBtn) stopBtn.style.display = "inline-block";
+        if (statusEl) { statusEl.textContent = "已连接"; statusEl.className = "avatar-status connected"; }
+    } else {
+        if (startBtn) startBtn.style.display = "inline-block";
+        if (stopBtn) stopBtn.style.display = "none";
+        if (statusEl) { statusEl.textContent = "未连接"; statusEl.className = "avatar-status"; }
+    }
+}
+
+
+/* ==========================================
+   内部：清理旧连接（不操作按钮，供 initLiveTalking 使用）
+   ========================================== */
+function _resetLiveTalking() {
+    livetalkingReady = false;
+    if (pc) {
+        pc.close();
+        pc = null;
+    }
+    const video = document.getElementById("livetalking-video");
+    if (video) video.srcObject = null;
+}
+
+
+/* ==========================================
+   点击「开始」按钮 → 建立 WebRTC 连接
+   ========================================== */
+function startLiveTalking() {
+    // 先清理旧连接（防止 session 泄漏），不操作按钮
+    _resetLiveTalking();
+    // 立即切换按钮，防止重复点击
+    updateAvatarButtons(true);
+    initLiveTalking();
+}
+
+
+/* ==========================================
+   点击「结束」按钮 → 关闭 WebRTC 连接
+   ========================================== */
+function stopLiveTalking() {
+    closeLiveTalking();
+}
+
+
+/* ==========================================
+   初始化 LiveTalking WebRTC 连接
+   ========================================== */
+async function initLiveTalking() {
+    // 按钮状态由 startLiveTalking() 控制，这里不再操作按钮
+
+    const videoElement = document.getElementById("livetalking-video");
+    const placeholder = document.getElementById("avatar-placeholder");
+
+    if (!videoElement) {
+        console.error("[LiveTalking] video element not found");
+        return;
+    }
+
+    // 重置占位符
+    if (placeholder) {
+        placeholder.innerHTML = '<div class="icon">📡</div><div><small>连接 LiveTalking...</small></div>';
+        placeholder.style.display = "flex";
+    }
+
+    try {
+        // 创建 RTCPeerConnection
+        pc = new RTCPeerConnection({ sdpSemantics: "unified-plan" });
+
+        // 监听视频/音频轨道
+        pc.addEventListener("track", function(evt) {
+            console.log("[LiveTalking] received track:", evt.track.kind);
+            if (evt.track.kind === "video") {
+                videoElement.srcObject = evt.streams[0];
+            }
+        });
+
+        // 监听连接状态
+        pc.onconnectionstatechange = function() {
+            console.log("[LiveTalking] connection state:", pc.connectionState);
+            if (pc.connectionState === "connected") {
+                livetalkingReady = true;
+                if (placeholder) placeholder.style.display = "none";
+                console.log("[LiveTalking] WebRTC connected, sessionid:", livetalkingSessionId);
+            } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+                livetalkingReady = false;
+                if (placeholder) {
+                    placeholder.innerHTML = '<div class="icon">❌</div><div><small>连接失败</small></div>';
+                    placeholder.style.display = "flex";
+                }
+                updateAvatarButtons(false);
+            }
+        };
+
+        // 添加 recvonly transceiver（aiortc 必须）
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+
+        // 创建 offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // 等待 ICE 收集完成
+        await waitForIceGathering(pc);
+
+        console.log("[LiveTalking] sending offer, SDP length:", pc.localDescription.sdp.length);
+
+        // 发送 offer
+        const response = await fetch(LIVETALKING_URL + "/offer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sdp: pc.localDescription.sdp,
+                type: pc.localDescription.type,
+            }),
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error("/offer HTTP " + response.status + ": " + errText.substring(0, 200));
+        }
+
+        const answer = await response.json();
+
+        if (answer.sessionid) {
+            livetalkingSessionId = String(answer.sessionid);
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        console.log("[LiveTalking] SDP exchange complete");
+
+    } catch (err) {
+        console.error("[LiveTalking] init failed:", err);
+        if (placeholder) {
+            placeholder.innerHTML = '<div class="icon"></div><div><small>连接失败: ' + err.message + '</small></div>';
+        }
+    }
+}
+
+
+/* ==========================================
+   等待 ICE 收集完成
+   ========================================== */
+function waitForIceGathering(pc) {
+    return new Promise(function(resolve) {
+        if (pc.iceGatheringState === "complete") {
+            resolve();
+        } else {
+            function checkState() {
+                if (pc.iceGatheringState === "complete") {
+                    pc.removeEventListener("icegatheringstatechange", checkState);
+                    resolve();
+                }
+            }
+            pc.addEventListener("icegatheringstatechange", checkState);
+            setTimeout(resolve, 5000);
+        }
+    });
+}
+
+
+/* ==========================================
+   发送文字到 LiveTalking（缓冲合并，避免频繁请求）
+   ========================================== */
+function sendToLiveTalking() {
+    if (!livetalkingReady || !pendingText) return;
+
+    const textToSend = pendingText;
+    pendingText = "";
+
+    console.log("[LiveTalking] sending text:", textToSend.substring(0, 50) + "...");
+
+    fetch(LIVETALKING_URL + "/human", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            text: textToSend,
+            type: "echo",
+            interrupt: true,
+            sessionid: livetalkingSessionId,
+        }),
+    })
+    .then(function(res) {
+        if (!res.ok) {
+            console.error("[LiveTalking] /human HTTP error:", res.status);
+            return null;
+        }
+        return res.json();
+    })
+    .then(function(data) {
+        if (data) console.log("[LiveTalking] /human done");
+    })
+    .catch(function(err) {
+        console.error("[LiveTalking] /human error:", err);
+    });
+}
+
+function flushPendingText() {
+    if (pendingText) {
+        sendToLiveTalking();
+    }
+    if (textSendTimer) {
+        clearTimeout(textSendTimer);
+        textSendTimer = null;
+    }
+}
+
+
+/* ==========================================
+   退出登录（先关闭 WebRTC 连接）
    ========================================== */
 function logout() {
+    closeLiveTalking();
     localStorage.removeItem("token");
     localStorage.removeItem("username");
     window.location.href = "/static/login.html";
@@ -55,21 +314,17 @@ const MOOD_LABEL = {
 
 
 /* ==========================================
-   状态显示变量
+   状态显示
    ========================================== */
 let statusTimer = null
 let statusSeconds = 0
 const statusMessages = {
-    "detecting_mood": "🎭 情绪检测",
+    "detecting_mood": " 情绪检测",
     "compacting": "️ 整理对话",
     "thinking": "💭 思考",
     "tool_call": "🔍 查询",
 }
 
-
-/* ==========================================
-   状态显示函数
-   ========================================== */
 function showStatus(status, tool) {
     statusSeconds = 0
     const statusEl = document.getElementById("status-display")
@@ -77,14 +332,14 @@ function showStatus(status, tool) {
 
     if (statusEl) {
         statusEl.style.display = "block"
-        statusEl.textContent = `${statusText} ${statusSeconds}s`
+        statusEl.textContent = statusText + " " + statusSeconds + "s"
     }
 
     if (statusTimer) clearInterval(statusTimer)
-    statusTimer = setInterval(() => {
+    statusTimer = setInterval(function() {
         statusSeconds++
         if (statusEl) {
-            statusEl.textContent = `${statusText} ${statusSeconds}s`
+            statusEl.textContent = statusText + " " + statusSeconds + "s"
         }
     }, 1000)
 }
@@ -100,87 +355,10 @@ function hideStatus() {
 
 
 /* ==========================================
-   状态变量
+   消息状态
    ========================================== */
 let currentBotMsg = null;
 let currentBotText = "";
-
-// 音频队列 + 文字队列（同步显示）
-let audioQueue = [];
-let textQueue = [];
-let isPlaying = false;
-let ttsEnabled = true;
-
-
-/* ==========================================
-   音频播放
-   ========================================== */
-function showAudioWave() {
-    const wave = document.getElementById("audio-wave");
-    if (wave) wave.style.display = "flex";
-}
-
-function hideAudioWave() {
-    const wave = document.getElementById("audio-wave");
-    if (wave) wave.style.display = "none";
-}
-
-function playNextAudio() {
-    if (audioQueue.length === 0) {
-        console.log("[Audio] queue empty, stop playing");
-        isPlaying = false;
-        hideAudioWave();
-        return;
-    }
-
-    console.log("[Audio] playNextAudio, audioQueue=" + audioQueue.length + ", textQueue=" + textQueue.length);
-    isPlaying = true;
-    showAudioWave();
-
-    // 显示对应的文字（文字和音频同步）
-    if (textQueue.length > 0) {
-        var nextText = textQueue.shift();
-        currentBotText += nextText;
-        if (currentBotMsg) {
-            currentBotMsg.textContent = currentBotText;
-        }
-        scrollToBottom();
-    }
-
-    const base64Data = audioQueue.shift();
-    const audioBytes = Uint8Array.from(atob(base64Data), function(c) { return c.charCodeAt(0); });
-    const blob = new Blob([audioBytes], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-
-    const audio = new Audio(url);
-    audio.onended = function() {
-        console.log("[Audio] ended");
-        URL.revokeObjectURL(url);
-        playNextAudio();
-    };
-    audio.onerror = function(e) {
-        console.error("[Audio] error:", e);
-        URL.revokeObjectURL(url);
-        playNextAudio();
-    };
-    audio.play().then(function() {
-        console.log("[Audio] playing started");
-    }).catch(function(e) {
-        console.error("[Audio] play failed:", e);
-    });
-}
-
-function toggleTTS() {
-    ttsEnabled = !ttsEnabled;
-    var btn = document.getElementById("tts-toggle");
-    if (btn) btn.textContent = ttsEnabled ? "🔊" : "🔇";
-    if (!ttsEnabled) {
-        audioQueue = [];
-        textQueue = [];
-        isPlaying = false;
-        hideAudioWave();
-    }
-}
 
 
 /* ==========================================
@@ -194,12 +372,13 @@ async function sendMessage() {
     input.value = "";
     appendMessage("user", text);
 
+    // 重置 LiveTalking 文字缓冲
+    pendingText = "";
+    flushPendingText();
+
     // 创建 bot 消息占位
     currentBotMsg = appendMessage("bot", "");
     currentBotText = "";
-    audioQueue = [];
-    textQueue = [];
-    isPlaying = false;
     const cursor = document.createElement("span");
     cursor.className = "typing-cursor";
     currentBotMsg.appendChild(cursor);
@@ -221,7 +400,7 @@ async function sendMessage() {
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
-            buffer = lines.pop(); // 保留不完整的行
+            buffer = lines.pop();
 
             for (const line of lines) {
                 if (line.startsWith("data: ")) {
@@ -257,49 +436,30 @@ async function sendMessage() {
 function handleSSEEvent(data, cursor) {
     switch (data.type) {
         case "status":
-            showStatus(data.status, data.tool)
-            break
+            showStatus(data.status, data.tool);
+            break;
 
         case "text":
-            hideStatus()
-            // 文字始终立即显示（保持流式体验）
+            hideStatus();
             currentBotText += data.content;
             if (currentBotMsg) {
                 currentBotMsg.textContent = currentBotText;
                 if (cursor) currentBotMsg.appendChild(cursor);
             }
             scrollToBottom();
+
+            // 缓冲文字（不立即发送，等 done 或超时后一次性发）
+            pendingText += data.content;
+            if (textSendTimer) clearTimeout(textSendTimer);
+            textSendTimer = setTimeout(flushPendingText, TEXT_SEND_DELAY);
             break;
 
         case "mood":
             updateMood(data.mood);
             break;
 
-        case "audio":
-            if (ttsEnabled) {
-                audioQueue.push(data.data);
-                console.log("[SSE] audio queued, audioQueue.length=" + audioQueue.length);
-                if (!isPlaying) playNextAudio();
-            }
-            break;
-
-        case "audio_done":
-            console.log("[SSE] audio_done, textQueue=" + textQueue.length + ", audioQueue=" + audioQueue.length);
-            // 队列会在播完后自动隐藏声波动画
-            // 刷新残余文字（防止 TTS 失败导致文字丢失）
-            if (ttsEnabled && textQueue.length > 0) {
-                while (textQueue.length > 0) {
-                    currentBotText += textQueue.shift();
-                }
-                if (currentBotMsg) {
-                    currentBotMsg.textContent = currentBotText;
-                }
-                scrollToBottom();
-            }
-            break;
-
         case "error":
-            hideStatus()
+            hideStatus();
             if (currentBotMsg) {
                 currentBotText += "\n[错误：" + data.content + "]";
                 currentBotMsg.textContent = currentBotText;
@@ -307,8 +467,10 @@ function handleSSEEvent(data, cursor) {
             break;
 
         case "done":
-            hideStatus()
+            hideStatus();
             if (cursor && cursor.parentNode) cursor.remove();
+            // 发送剩余文字到 LiveTalking
+            flushPendingText();
             break;
     }
 }
@@ -320,7 +482,7 @@ function handleSSEEvent(data, cursor) {
 function appendMessage(role, text) {
     const container = document.getElementById("chat-messages");
     const div = document.createElement("div");
-    div.className = `message ${role}`;
+    div.className = "message " + role;
     div.textContent = text;
     container.appendChild(div);
     scrollToBottom();
@@ -334,7 +496,7 @@ function appendMessage(role, text) {
 function updateMood(mood) {
     const emoji = MOOD_EMOJI[mood] || "😊";
     const label = MOOD_LABEL[mood] || mood;
-    document.getElementById("mood-text").textContent = `Lisa 心情：${label}`;
+    document.getElementById("mood-text").textContent = "Lisa 心情：" + label;
     document.querySelector(".mood-indicator .emoji").textContent = emoji;
 }
 
@@ -357,3 +519,22 @@ document.getElementById("chat-input").addEventListener("keydown", function(e) {
         sendMessage();
     }
 });
+
+
+/* ==========================================
+   页面卸载时主动关闭 WebRTC 连接（防止 LiveTalking session 泄漏）
+   ========================================== */
+window.addEventListener("beforeunload", function() {
+    console.log("[LiveTalking] page unloading, closing connection");
+    if (pc) {
+        pc.close();
+        pc = null;
+    }
+    livetalkingReady = false;
+});
+
+
+/* ==========================================
+   页面加载时不自动连接，等用户点击按钮
+   ========================================== */
+// initLiveTalking() 由"连接"按钮触发

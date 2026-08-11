@@ -16,26 +16,24 @@
             </span>
         </div>
         <div class="main-content">
-            <!-- Avatar 占位区 (Phase 3 集成 Live2D) -->
+            <!-- Avatar 视频区 (Phase 3: LiveTalking WebRTC) -->
             <div class="avatar-section">
                 <div class="avatar-area">
-                    <div class="avatar-placeholder">
-                        <div class="icon">👩💼</div>
-                        <div><small>Lisa - Live2D</small></div>
+                    <video id="livetalking-video" autoplay playsinline></video>
+                    <div class="avatar-placeholder" id="avatar-placeholder">
+                        <div class="icon">📡</div>
+                        <div><small>数字人未连接</small></div>
                     </div>
+                </div>
+                <!-- 开始/结束 控制按钮 -->
+                <div class="avatar-controls">
+                    <button id="start-btn" class="btn-avatar btn-start" onclick="startLiveTalking()">▶ 开始</button>
+                    <button id="stop-btn" class="btn-avatar btn-stop" onclick="stopLiveTalking()" style="display:none;">■ 结束</button>
+                    <span id="avatar-status" class="avatar-status">未连接</span>
                 </div>
                 <div class="mood-indicator">
                     <span class="emoji">😄</span>
                     <span id="mood-text">Lisa 心情：等待中</span>
-                </div>
-                <div class="audio-wave" id="audio-wave" style="display:none;">
-                    <div class="bar"></div>
-                    <div class="bar"></div>
-                    <div class="bar"></div>
-                    <div class="bar"></div>
-                    <div class="bar"></div>
-                    <div class="bar"></div>
-                    <div class="bar"></div>
                 </div>
             </div>
 
@@ -45,13 +43,12 @@
                 <div class="status-bar" id="status-display" style="display:none;"></div>
                 <div class="chat-messages" id="chat-messages"></div>
                 <div class="chat-input-area">
-                    <button id="tts-toggle" onclick="toggleTTS()" title="语音开关">🔊</button>
                     <input type="text" id="chat-input" placeholder="输入消息...">
                     <button id="send-btn" onclick="sendMessage()">发送</button>
                 </div>
             </div>
         </div>
     </div>
-    <script src="/static/js/app.js?v=3"></script>
+    <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>

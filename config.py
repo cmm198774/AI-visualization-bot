@@ -86,8 +86,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 
 
 # ==========================================
-# TTS 配置（edge-tts 云端合成）
+# LiveTalking 配置（Phase 3）
 # ==========================================
-EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
-TTS_CHUNK_SIZE = int(os.getenv("TTS_CHUNK_SIZE", "40"))
-TTS_PREBUFFER = int(os.getenv("TTS_PREBUFFER", "4"))
+LIVETALKING_URL = os.getenv("LIVETALKING_URL", "http://localhost:8010")

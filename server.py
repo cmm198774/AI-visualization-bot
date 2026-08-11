@@ -27,8 +27,6 @@ from agent import create_agent_graph
 from tools import get_info_from_local_db, TOOL_DESCRIPTIONS
 from database import init_db, create_user, get_user_by_username
 from auth import verify_password, get_password_hash, create_access_token
-from sentence_splitter import split_sentences
-from tts_client import tts_stream
 
 
 # ==========================================
@@ -337,23 +335,9 @@ async def _event_stream(query: str, user_id: str):
         if not final_message:
             final_message = "抱歉，我暂时无法回复。"
 
-        # 分句
-        sentences = split_sentences(final_message)
-        if not sentences:
-            sentences = [final_message]
-
-        # 流水线发送文字 + 音频（tts_stream 并发处理，按序 yield）
-        async for sentence, audio_b64 in tts_stream(sentences):
-            # 1. 先 yield 文字（前端立即显示）
-            text_data = json.dumps({"type": "text", "content": sentence}, ensure_ascii=False)
-            yield "data: " + text_data + "\n\n"
-
-            # 2. yield 音频
-            audio_data = json.dumps({"type": "audio", "data": audio_b64}, ensure_ascii=False)
-            yield "data: " + audio_data + "\n\n"
-
-        # 发送音频结束标记
-        yield "data: " + json.dumps({"type": "audio_done"}) + "\n\n"
+        # 输出完整文本（TTS 由 LiveTalking 负责）
+        text_data = json.dumps({"type": "text", "content": final_message}, ensure_ascii=False)
+        yield "data: " + text_data + "\n\n"
 
         # 发送情绪标签
         mood_data = json.dumps({"type": "mood", "mood": mood}, ensure_ascii=False)

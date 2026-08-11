@@ -1,7 +1,9 @@
 # Lisa 的办公室 - AI 可视化聊天机器人
 
 ## 项目概述
-一个带虚拟形象（Live2D）的 AI 聊天机器人，支持流式文本/音频输出、情绪检测、用户认证。
+一个带虚拟形象（MuseTalk 数字人）的 AI 聊天机器人，支持流式文本/音频/视频输出、情绪检测、用户认证、命令系统。
+
+**Phase 3 重大变更**: 虚拟形象从 Live2D 改为 MuseTalk 数字人（开源项目 lipku/LiveTalking），通过 WebRTC 实时传输视频流。
 
 ## 技术栈
 - **后端**: FastAPI + SSE 流式输出
@@ -58,22 +60,110 @@
 - [x] 浏览器缓存修复（NoCacheStaticFiles 类）
 - [x] **TTS 流畅度已解决**（edge-tts 云端合成极快，消除句子间停顿）
 
-### Phase 3: Live2D 虚拟形象
-- [ ] Live2D 集成（pixi-live2d-display）
-- [ ] 情绪联动（根据 mood 切换表情）
-- [ ] 口型同步（配合 TTS）
+### Phase 3: MuseTalk 数字人集成（进行中，2026-08-07 启动）
+
+#### Phase 3a：LiveTalking Demo 验证 ✅
+- [x] 放弃 Docker 方案（WebRTC NAT 穿透失败），改用 Windows 原生运行
+- [x] py310 环境直接复用（PyTorch 2.10.0+cu128，无需新建 py312）
+- [x] 补装 4 个缺失包：resampy、flask、aiortc、aiohttp_cors
+- [x] 创建 utils/__init__.py 修复 Windows 模块导入问题
+- [x] MuseTalk 模型加载成功，RTX 5090D CUDA 加速正常
+- [x] WebRTC 视频流本地浏览器正常显示（http://127.0.0.1:8010/webrtcapi.html）
+- [x] 清理 Docker 镜像（释放 ~65GB）和旧测试脚本
+
+**LiveTalking 文件位置**:
+| 项目 | 路径 |
+|---|---|
+| LiveTalking 代码 | `G:\JupyterProject\LiveTalking\` |
+| 模型文件 | `G:\JupyterProject\LiveTalking\models\`（musetalkV15、sd-vae、whisper、dwpose、face-parse-bisent） |
+| 数字人素材 | `G:\JupyterProject\LiveTalking\data\avatars\musetalk_avatar1\` |
+| 测试脚本 | `tests/test_livetalking_py310.py` |
+
+#### Phase 3b：server.py 改造 ✅
+- [x] 移除 edge-tts 相关代码（删除 tts_client.py、sentence_splitter.py）
+- [x] SSE 输出简化为纯文字流（音频由 LiveTalking 负责）
+- [x] config.py 移除 TTS 配置，新增 LIVETALKING_URL
+
+#### Phase 3c：前端集成 ✅
+- [x] index.html 替换 avatar 占位区为 `<video>` 容器
+- [x] app.js 新增 WebRTC 连接 LiveTalking（POST /offer）
+- [x] app.js 新增 sendToLiveTalking() 发送文字触发数字人（POST /human）
+- [x] app.js 移除音频队列、声波动画、TTS 开关逻辑
+- [x] style.css 添加视频流样式，移除 audio-wave/tts-toggle 样式
+
+#### Phase 3b+：开始/结束按钮验证 ✅（2026-08-11）
+- [x] avatar 区域新增控制栏（`.avatar-controls`）：开始/结束按钮 + 连接状态标签
+- [x] `startLiveTalking()` / `stopLiveTalking()` 按钮互斥切换（绿色开始 / 红色结束）
+- [x] 内部 `_resetLiveTalking()` 清理旧连接，不操作按钮（修复按钮被覆盖 bug）
+- [x] Playwright 自动化测试通过：开始→视频流 576×768 + 按钮切换 → 结束→恢复初始状态
+- [x] 发消息验证：SSE 文字回复正常，`sendToLiveTalking()` 调用 `/human` 触发数字人说话
+- [x] **已知问题**: `sendToLiveTalking()` 使用 `interrupt: true`，快速连续对话时数字人会被打断
+
+#### Phase 3d：Lisa 形象定制（待开始）
+- [ ] 需要生成 Lisa 数字人照片
+- [ ] 创建 Lisa 专属 avatar_id
+
+#### Phase 3e：LiveTalking 稳定性修复 ✅（2026-08-10）
+
+**问题根因**：
+- 每次新建 session 都加载模型到 GPU，销毁时 PyTorch caching allocator 不释放缓存
+- 3 session 并发 → 3 × ~10GB 推理线程 → 30GB → CUDA OOM
+- 推理队列（`feat_queue`/`res_frame_queue`/`_queue`）阻塞导致 FPS 从 25 降到 9 后卡死
+
+**解决方案（三层）**：
+
+1. **诊断日志系统**（`utils/diag.py` 独立模块）：
+   - `GPUMonitor`：每 100 帧检测显存，增长 >500MB 触发 `torch.cuda.empty_cache()`
+   - 推理链路计时：`inference()` / `process_frames()` / `recv()` 各环节耗时
+   - 队列预警：`push_video()` 队列堆积时打日志
+
+2. **GPU 资源泄漏修复**：
+   - `app.py` 启动前：kill 残留 LiveTalking 进程 + CUDA cache 清理 + 显存报告
+   - `app.py` 退出时：`atexit` 注册清理函数，释放 GPU 资源
+   - `base_avatar.py`：`_check_gpu_health()` 每 100 帧监控显存
+
+3. **Session 池改造**（核心修复）：
+   - `session_manager.py` 重写为 `SessionPool`：启动时 `init_pool()` 预创建 N 个 session
+   - `asyncio.Lock` 保护 `acquire()` / `release()` 并发安全
+   - WebRTC 断开 → `release()` 回池（`reset_for_reuse()` 清队列 + 重置 speaking，不杀线程）
+   - `config.py`：`--max_session` → `--pool_size`，默认 2
+
+**改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `server/session_manager.py` | 重写为 SessionPool（pool/busy 两个字典 + Lock） |
+| `avatars/base_avatar.py` | 新增 `reset_for_reuse()` + `_check_gpu_health()` |
+| `server/webrtc.py` | 新增 `clear_queues()` + `recv()` FPS 日志 |
+| `server/rtc_manager.py` | `create_session` → `acquire`，`remove_session` → `release` |
+| `config.py` | `--max_session` → `--pool_size` |
+| `app.py` | 启动前清理 + `init_pool()` + atexit 退出清理 |
+| `utils/diag.py` | 新建，诊断模块 |
+
+**结果**：
+- GPU 显存稳定 1613MB（之前 3 并发爆到 30GB）
+- 服务启动预创建 2 session，线程全程运行（空闲时 `queue.get(timeout=1)` 占 <1% CPU）
+- WebRTC 断开回池复用，不创建/销毁 session
+
+**Phase 3 启动命令**:
+```bash
+# LiveTalking 服务（单独终端）
+set PYTHONPATH=G:\JupyterProject\LiveTalking
+cd G:\JupyterProject\LiveTalking
+C:\ProgramData\Anaconda3\envs\py310\python.exe app.py --model musetalk --avatar_id musetalk_avatar1 --transport webrtc --listenport 8010 --pool_size 2
+
+# Lisa 主服务（另一个终端）
+conda run -n py310 python server.py
+```
 
 ## 项目文件结构
 ```
 20260725_Agent_AI可视化机器人/
 ├── .env                    # 环境变量配置（API keys, SECRET_KEY 等）
 ├── CLAUDE.md              # 项目记忆文件
-├── server.py              # FastAPI 主服务器，SSE 流式输出，命令拦截，TTS 集成
+├── server.py              # FastAPI 主服务器，SSE 流式输出，命令拦截
 ├── agent.py               # LangGraph Agent（4 节点：detect_mood, compact, model, tools）
 ├── commands.py            # 命令处理模块（/clear, /compact, /status, /mood, /help）
 ├── memory_utils.py        # 消息压缩工具（compact_messages 函数，供 agent 和 commands 共用）
-├── sentence_splitter.py   # 中文分句工具（按标点拆句，供 TTS 逐句输出）
-├── tts_client.py          # TTS 客户端（edge-tts 云端合成 + tts_stream 流式合成 + 预缓冲）
 ├── tools.py               # Qdrant RAG 工具（get_info_from_local_db）
 ├── config.py              # 配置加载（从 .env 读取）
 ├── database.py            # SQLite 用户数据库（users 表）
@@ -100,16 +190,14 @@
 │   ├── test_chat.py               # SSE 流式聊天测试
 │   ├── test_commands_manual.py    # 命令系统手动测试
 │   ├── test_e2e.py                # 端到端测试
-│   ├── test_e2e_real.py           # 端到端 TTS 测试（24 chunk 长文本）
+│   ├── test_e2e_real.py           # 端到端测试（长文本）
 │   ├── test_error_handling.py     # 错误处理测试
 │   ├── test_latency.py            # 延迟测试
 │   ├── test_logging_integration.py # 日志集成测试
-│   ├── test_sentence_splitter.py  # 分句单元测试（9 个用例）
 │   ├── test_server.py             # 服务器测试
-│   ├── test_single.py             # 单句 TTS 计时测试
+│   ├── test_single.py             # 单句计时测试
 │   ├── test_stress.py             # 多用户压力测试（3 用户 × 8 请求）
-│   ├── test_tts_server.py         # TTS 服务端单元测试（6 个用例）
-│   └── test_tts_stream.py         # tts_stream 单元测试（6 个用例）
+│   └── test_livetalking_py310.py  # LiveTalking 连接测试
 │
 └── docs/                  # 文档
     ├── custom/
@@ -134,7 +222,13 @@
 
 ## 运行方式
 ```bash
-# 只需一个终端启动主服务（TTS 已改为 edge-tts 云端调用，无需独立服务）
+# 需要两个终端分别启动：
+
+# 终端 1: LiveTalking 服务（WebRTC 视频流）
+cd G:\JupyterProject\LiveTalking
+C:\ProgramData\Anaconda3\envs\py310\python.exe app.py --model musetalk --avatar_id musetalk_avatar1 --transport webrtc --listenport 8010 --pool_size 2
+
+# 终端 2: Lisa 主服务（FastAPI + SSE 文字流）
 conda run -n py310 python server.py
 ```
 
@@ -143,16 +237,37 @@ conda run -n py310 python server.py
 - `MAX_CHECKPOINTS=5`: Redis 最大 checkpoint 数
 - LLM 超时: 60 秒
 - 工具超时: 20 秒
-- `EDGE_TTS_VOICE="zh-CN-XiaoxiaoNeural"`: edge-tts 音色
-- `TTS_CHUNK_SIZE=40`: 每 chunk 目标字数（影响生成/播放平衡）
-- `TTS_PREBUFFER=4`: 预缓冲 chunk 数（播放前等待 N 个 chunk 就绪）
+- `LIVETALKING_URL="http://localhost:8010"`: LiveTalking 服务地址
+- `TEXT_SEND_DELAY=500`: 前端文字缓冲延迟（ms），无新 chunk 后发送
+- `SENTENCE_INTERVAL=1000`: 数字人说话句间间隔（ms）
 
 ## 已知问题
+
+### Phase 1/2 问题
 - astream_events 抛出 NotImplementedError，使用 ainvoke + 回调替代
 - 浏览器缓存问题：修改前端后需要 Ctrl+Shift+R 刷新
 - Windows SSL 证书加载 bug：aiohttp 导入时 `ssl.create_default_context()` 调用 `_load_windows_store_certs` 可能抛出 `NOT_ENOUGH_DATA`。已在 `tts_client.py` 和 `config.py` 顶部用 monkey-patch 修复
 - pip 安装时如遇 SSL 错误：`export SSL_CERT_FILE="<certifi_path>/cacert.pem"` 后用默认 PyPI（不用阿里云镜像）
 - **edge-tts 需要联网**：语音合成依赖 Microsoft 云端服务，断网时降级为纯文字输出
+
+### Phase 3 踩坑记录
+1. **Docker WebRTC 完全不通**：Docker NAT 阻断 UDP P2P 连接，STUN 服务器也无法穿透。解决：放弃 Docker，改用 Windows 原生运行
+2. **accelerate 覆盖 PyTorch CUDA 版本**：`pip install -r requirements.txt` 会把 torch 降级为 CPU 版。解决：先装 PyTorch cu128，再装 requirements
+3. **Windows 下 `ModuleNotFoundError: No module named 'utils.logger'`**：`utils/` 目录缺 `__init__.py`。解决：创建空文件 `utils/__init__.py`
+4. **端口 8010 被占用**：旧进程未退出。解决：`netstat -ano | findstr :8010` 找 PID，`taskkill //PID xxx //F`
+5. **conda 镜像源 SSL 报错**：清华镜像在代理环境下失败。解决：`conda config --set proxy_servers.http ''`
+6. **LiveTalking 推理线程死锁（2026-08-10）**：
+   - **现象**：昨天 demo 正常，今天 WebRTC 连接成功但视频画面不动。FPS 从 25 降到 9.37 后卡死，日志停止更新
+   - **已排除**：GPU 显存充足（17GB 空闲）、GPU 频率正常（2595MHz）、虚拟内存充足
+   - **expandable_segments 效果**：设置 `PYTORCH_ALLOC_CONF=expandable_segments:True` 后 FPS 恢复到 25，但 100 帧后仍会死锁
+   - **怀疑原因**：`feat_queue`/`res_frame_queue`/`_queue` 队列阻塞，或 CUDA 上下文丢失
+   - **关键代码位置**：
+     - `avatars/base_avatar.py:326-381` — `inference()` 主循环
+     - `avatars/base_avatar.py:383-467` — `process_frames()` 消费推理结果
+     - `avatars/audio_features/whisper.py:58-76` — `run_step()` 提取音频特征
+     - `server/webrtc.py:111-152` — `recv()` 从 `_queue` 取帧
+   - **下一步调试**：在队列 get/put 处加时间戳日志、检查队列大小、尝试减小 `batch_size`、加 `torch.cuda.synchronize()` 捕获 CUDA 错误
+   - **临时方案**：每次测试前重启 LiveTalking，用 `--max_session 1`，发短文本（<50 字）更稳定
 
 ## Agent 流程图
 ```
@@ -251,13 +366,11 @@ data: {"type": "status", "status": "compacting"}
 data: {"type": "status", "status": "thinking"}
 data: {"type": "status", "status": "tool_call", "tool": "工具调用"}
 data: {"type": "text", "content": "第一句话"}
-data: {"type": "audio", "data": "<base64 MP3>"}
 data: {"type": "text", "content": "第二句话"}
-data: {"type": "audio", "data": "<base64 MP3>"}
-data: {"type": "audio_done"}
 data: {"type": "mood", "mood": "friendly"}
 data: {"type": "done"}
 ```
+（Phase 3 后音频由 LiveTalking 负责，SSE 仅推送文字）
 
 ### POST /api/register - 用户注册
 **请求**:
@@ -278,6 +391,38 @@ data: {"type": "done"}
 }
 ```
 **响应**: `{"token": "JWT token", "username": "用户名"}`
+
+## LiveTalking 集成技术细节
+
+### 架构变更
+```
+旧架构 (Phase 1/2):
+用户 → FastAPI → LangGraph → TTS(edge-tts) → SSE(文字+音频) → 前端
+
+新架构 (Phase 3):
+用户 → FastAPI → LangGraph → SSE(文字) → 前端
+                  ↓
+              LiveTalking API → WebRTC 视频流 → 前端
+```
+
+### LiveTalking API 端点
+- `POST /echo` — 发送文字，触发数字人说话
+- `GET /webrtcapi.html` — WebRTC 前端页面
+- `POST /whep` — WHEP 协议建立 WebRTC 连接
+
+### 关键配置
+- LiveTalking 端口：`8010`
+- Lisa 主服务端口：`8000`
+- 传输模式：`webrtc`（本地直连，不需要 STUN）
+- 数字人模型：`musetalk`
+- Avatar ID：`musetalk_avatar1`
+
+### 依赖版本
+- PyTorch 2.10.0+cu128（已有，不要装 PyTorch 3.12 浪费磁盘）
+- 关键包：resampy、flask、aiortc、aiohttp_cors、opencv-python-headless
+- `utils/__init__.py` 必须存在（Windows 必需）
+
+---
 
 ## 命令系统使用指南
 
