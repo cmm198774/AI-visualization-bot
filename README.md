@@ -1,6 +1,6 @@
 # Lisa 的办公室 - AI 可视化聊天机器人
 
-一个带虚拟形象（Live2D）的 AI 聊天机器人，支持流式文本输出、情绪检测、用户认证、斜杠命令系统。
+一个带 MuseTalk 数字人虚拟形象的 AI 聊天机器人，支持流式文本输出、WebRTC 实时视频流、情绪检测、用户认证、斜杠命令系统。
 
 ## 技术栈
 
@@ -11,6 +11,7 @@
 - **缓存**: Redis（LangGraph checkpoint 持久化）
 - **用户数据库**: SQLite
 - **认证**: JWT token（python-jose + bcrypt）
+- **数字人**: MuseTalk + LiveTalking（WebRTC 实时口型同步视频流）
 
 ## 功能特性
 
@@ -39,6 +40,12 @@
 | `/mood <情绪>` | 手动设置情绪 | `/mood cheerful` |
 | `/help` | 显示帮助 | `/help` |
 
+### 数字人（Phase 3）
+- MuseTalk 实时口型同步（基于唇部动作驱动）
+- WebRTC 实时视频流传输（本地直连，低延迟）
+- 前端 `<video>` 元素渲染，支持开始/结束按钮控制
+- 文字自动发送到数字人，触发说话动画
+
 ## 项目结构
 
 ```
@@ -50,8 +57,8 @@
 ├── config.py              # 配置加载
 ├── database.py            # SQLite 用户数据库
 ├── auth.py                # JWT 认证
-├── sys_logger.py          # 日志系统
-├── sys_memory.py          # RedisSaver（checkpoint 持久化）
+── sys_logger.py          # 日志系统
+── sys_memory.py          # RedisSaver（checkpoint 持久化）
 ├── start_redis.py         # Redis 服务器管理
 ├── .env.example           # 环境变量模板
 ├── requirements.txt       # 依赖列表
@@ -60,7 +67,7 @@
 │   ├── index.html         # 主聊天页面
 │   ├── login.html         # 登录页面
 │   ├── css/               # 样式
-│   └── js/                # 前端逻辑
+│   └── js/                # 前端逻辑（含 WebRTC 连接管理）
 │
 └── docs/                  # 项目文档
     ├── custom/            # 项目设计文档
@@ -86,19 +93,11 @@ pip install -r requirements.txt
 ### 3. 配置环境变量
 
 ```bash
-# 复制模板
 cp .env.example .env
-
 # 编辑 .env，填入你的 API 密钥
-# 必填项：
-#   LLM_API_KEY        - 阿里云 Token Plan API Key
-#   DASHSCOPE_API_KEY  - DashScope API Key（Embedding 模型）
-#   SECRET_KEY         - JWT 签名密钥（自定义随机字符串）
 ```
 
 ### 4. 准备 Redis
-
-项目内置了 Windows 版 Redis，启动时会自动运行。如需手动启动：
 
 ```bash
 redis-server/redis-server.exe redis_cache/redis.conf
@@ -106,11 +105,27 @@ redis-server/redis-server.exe redis_cache/redis.conf
 
 ### 5. 启动服务
 
+需要**两个终端**分别启动：
+
+**终端 1 — LiveTalking 数字人服务（WebRTC 视频流）**：
 ```bash
-python server.py
+cd G:\JupyterProject\LiveTalking
+C:\ProgramData\Anaconda3\envs\py310\python.exe app.py \
+  --model musetalk --avatar_id musetalk_avatar1 \
+  --transport webrtc --listenport 8010 --pool_size 2
 ```
 
-服务启动后访问 `http://127.0.0.1:8000`
+**终端 2 — Lisa 主服务（FastAPI + SSE 文字流）**：
+```bash
+conda run -n py310 python server.py
+```
+
+服务启动后访问 `http://127.0.0.1:8000`，点击「▶ 开始」按钮连接数字人视频流。
+
+### 6. 浏览器测试
+
+- 访问 `http://127.0.0.1:8000` → Lisa 聊天主界面
+- 访问 `http://127.0.0.1:8010/webrtcapi.html` → LiveTalking 独立测试页
 
 ## Agent 架构
 
@@ -120,9 +135,9 @@ python server.py
     ▼
 ┌─────────────────┐
 │  detect_mood    │  情绪检测（6 种情绪）
-└────────┬────────┘
+────────┬────────┘
          ▼
-┌─────────────────┐
+─────────────────┐
 │    compact      │  消息压缩（LLM 摘要 + 截断降级）
 └────────┬────────┘
          ▼
@@ -135,6 +150,16 @@ python server.py
          └── 无 tool_calls → 返回最终响应
 ```
 
+## 整体架构（Phase 3）
+
+```
+用户 → FastAPI → LangGraph → SSE（文字）→ 前端
+                  ↓
+              LiveTalking API（POST /human）
+                  ↓
+              WebRTC 视频流 → 前端 <video> 元素
+```
+
 ## API 端点
 
 | 方法 | 路径 | 说明 |
@@ -144,6 +169,14 @@ python server.py
 | POST | `/api/login` | 用户登录 |
 | GET | `/` | 主页 |
 
+**LiveTalking API（独立服务，端口 8010）**：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/offer` | 建立 WebRTC 连接 |
+| POST | `/human` | 发送文字，触发数字人说话 |
+| GET | `/webrtcapi.html` | WebRTC 前端测试页 |
+
 ## 重要配置
 
 | 参数 | 默认值 | 说明 |
@@ -151,6 +184,17 @@ python server.py
 | `MEMORY_TOKEN_LIMIT` | 20000 | 上下文 token 上限 |
 | `MAX_CHECKPOINTS` | 5 | 每个用户最大 checkpoint 数 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 60 | JWT token 过期时间（分钟） |
+| `LIVETALKING_URL` | `http://localhost:8010` | LiveTalking 服务地址 |
+| `TEXT_SEND_DELAY` | 500 | 前端文字缓冲延迟（ms） |
+| `SENTENCE_INTERVAL` | 1000 | 数字人说话句间间隔（ms） |
+
+## 环境要求
+
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| Python | 3.10（conda py310） | LiveTalking 依赖 |
+| PyTorch | 2.10.0+cu128 | CUDA 12.8，RTX 5090D 加速 |
+| Node.js | ≥18 | 前端构建 |
 
 ## License
 
