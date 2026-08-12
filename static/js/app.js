@@ -27,19 +27,9 @@ let pc = null;
 let livetalkingReady = false;
 let livetalkingSessionId = "0";
 
-// 文字缓冲：收集 SSE 文字 chunk，按句拆分发给 LiveTalking
-let pendingText = "";
-let textSendTimer = null;
-const TEXT_SEND_DELAY = 500; // 500ms 无新 chunk 就发送
-
-// 句子队列：按顺序发送，每句间隔 1 秒
-let sentenceQueue = [];
-let isSendingSentence = false;
-const SENTENCE_INTERVAL = 1000; // 每句间隔 1 秒
-
 
 /* ==========================================
-   关闭现有 WebRTC 连接（登出/结束按钮时调用）
+   关闭 WebRTC 连接
    ========================================== */
 function closeLiveTalking() {
     console.log("[LiveTalking] closing connection...");
@@ -53,162 +43,115 @@ function closeLiveTalking() {
     const video = document.getElementById("livetalking-video");
     if (video) video.srcObject = null;
 
-    // 恢复占位符
     const placeholder = document.getElementById("avatar-placeholder");
     if (placeholder) {
+        placeholder.innerHTML = '<div class="icon">📡</div><div><small>数字人未连接</small></div>';
         placeholder.style.display = "flex";
-    }
-
-    // 恢复按钮状态：显示「开始」，隐藏「结束」
-    updateAvatarButtons(false);
-}
-
-
-/* ==========================================
-   更新控制按钮显示状态
-   ========================================== */
-function updateAvatarButtons(connected) {
-    var startBtn = document.getElementById("start-btn");
-    var stopBtn = document.getElementById("stop-btn");
-    var statusEl = document.getElementById("avatar-status");
-    if (connected) {
-        if (startBtn) startBtn.style.display = "none";
-        if (stopBtn) stopBtn.style.display = "inline-block";
-        if (statusEl) { statusEl.textContent = "已连接"; statusEl.className = "avatar-status connected"; }
-    } else {
-        if (startBtn) startBtn.style.display = "inline-block";
-        if (stopBtn) stopBtn.style.display = "none";
-        if (statusEl) { statusEl.textContent = "未连接"; statusEl.className = "avatar-status"; }
+        placeholder.classList.remove("unavailable");
     }
 }
 
 
 /* ==========================================
-   内部：清理旧连接（不操作按钮，供 initLiveTalking 使用）
+   初始化 LiveTalking WebRTC 连接（返回 Promise）
    ========================================== */
-function _resetLiveTalking() {
-    livetalkingReady = false;
-    if (pc) {
-        pc.close();
-        pc = null;
-    }
-    const video = document.getElementById("livetalking-video");
-    if (video) video.srcObject = null;
-}
+function initLiveTalking() {
+    return new Promise(function(resolve, reject) {
+        const videoElement = document.getElementById("livetalking-video");
+        const placeholder = document.getElementById("avatar-placeholder");
 
-
-/* ==========================================
-   点击「开始」按钮 → 建立 WebRTC 连接
-   ========================================== */
-function startLiveTalking() {
-    // 先清理旧连接（防止 session 泄漏），不操作按钮
-    _resetLiveTalking();
-    // 立即切换按钮，防止重复点击
-    updateAvatarButtons(true);
-    initLiveTalking();
-}
-
-
-/* ==========================================
-   点击「结束」按钮 → 关闭 WebRTC 连接
-   ========================================== */
-function stopLiveTalking() {
-    closeLiveTalking();
-}
-
-
-/* ==========================================
-   初始化 LiveTalking WebRTC 连接
-   ========================================== */
-async function initLiveTalking() {
-    // 按钮状态由 startLiveTalking() 控制，这里不再操作按钮
-
-    const videoElement = document.getElementById("livetalking-video");
-    const placeholder = document.getElementById("avatar-placeholder");
-
-    if (!videoElement) {
-        console.error("[LiveTalking] video element not found");
-        return;
-    }
-
-    // 重置占位符
-    if (placeholder) {
-        placeholder.innerHTML = '<div class="icon">📡</div><div><small>连接 LiveTalking...</small></div>';
-        placeholder.style.display = "flex";
-    }
-
-    try {
-        // 创建 RTCPeerConnection
-        pc = new RTCPeerConnection({ sdpSemantics: "unified-plan" });
-
-        // 监听视频/音频轨道
-        pc.addEventListener("track", function(evt) {
-            console.log("[LiveTalking] received track:", evt.track.kind);
-            if (evt.track.kind === "video") {
-                videoElement.srcObject = evt.streams[0];
-            }
-        });
-
-        // 监听连接状态
-        pc.onconnectionstatechange = function() {
-            console.log("[LiveTalking] connection state:", pc.connectionState);
-            if (pc.connectionState === "connected") {
-                livetalkingReady = true;
-                if (placeholder) placeholder.style.display = "none";
-                console.log("[LiveTalking] WebRTC connected, sessionid:", livetalkingSessionId);
-            } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-                livetalkingReady = false;
-                if (placeholder) {
-                    placeholder.innerHTML = '<div class="icon">❌</div><div><small>连接失败</small></div>';
-                    placeholder.style.display = "flex";
-                }
-                updateAvatarButtons(false);
-            }
-        };
-
-        // 添加 recvonly transceiver（aiortc 必须）
-        pc.addTransceiver("video", { direction: "recvonly" });
-        pc.addTransceiver("audio", { direction: "recvonly" });
-
-        // 创建 offer
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        // 等待 ICE 收集完成
-        await waitForIceGathering(pc);
-
-        console.log("[LiveTalking] sending offer, SDP length:", pc.localDescription.sdp.length);
-
-        // 发送 offer
-        const response = await fetch(LIVETALKING_URL + "/offer", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                sdp: pc.localDescription.sdp,
-                type: pc.localDescription.type,
-            }),
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error("/offer HTTP " + response.status + ": " + errText.substring(0, 200));
+        if (!videoElement) {
+            reject(new Error("video element not found"));
+            return;
         }
 
-        const answer = await response.json();
-
-        if (answer.sessionid) {
-            livetalkingSessionId = String(answer.sessionid);
-        }
-
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        console.log("[LiveTalking] SDP exchange complete");
-
-    } catch (err) {
-        console.error("[LiveTalking] init failed:", err);
         if (placeholder) {
-            placeholder.innerHTML = '<div class="icon"></div><div><small>连接失败: ' + err.message + '</small></div>';
+            placeholder.innerHTML = '<div class="icon">📡</div><div><small>连接 LiveTalking...</small></div>';
+            placeholder.style.display = "flex";
+            placeholder.classList.remove("unavailable");
         }
-    }
+
+        try {
+            pc = new RTCPeerConnection({ sdpSemantics: "unified-plan" });
+
+            pc.addEventListener("track", function(evt) {
+                console.log("[LiveTalking] received track:", evt.track.kind);
+                if (evt.track.kind === "video") {
+                    videoElement.srcObject = evt.streams[0];
+                }
+            });
+
+            pc.onconnectionstatechange = function() {
+                console.log("[LiveTalking] connection state:", pc.connectionState);
+                if (pc.connectionState === "connected") {
+                    livetalkingReady = true;
+                    if (placeholder) placeholder.style.display = "none";
+                    console.log("[LiveTalking] WebRTC connected, sessionid:", livetalkingSessionId);
+                    resolve();
+                } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+                    livetalkingReady = false;
+                    reject(new Error("connection " + pc.connectionState));
+                }
+            };
+
+            pc.addTransceiver("video", { direction: "recvonly" });
+            pc.addTransceiver("audio", { direction: "recvonly" });
+
+            pc.createOffer().then(function(offer) {
+                return pc.setLocalDescription(offer);
+            }).then(function() {
+                return waitForIceGathering(pc);
+            }).then(function() {
+                console.log("[LiveTalking] sending offer, SDP length:", pc.localDescription.sdp.length);
+                return fetch(LIVETALKING_URL + "/offer", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type,
+                    }),
+                });
+            }).then(function(response) {
+                if (!response.ok) {
+                    return response.text().then(function(t) {
+                        throw new Error("/offer HTTP " + response.status + ": " + t.substring(0, 200));
+                    });
+                }
+                return response.json();
+            }).then(function(answer) {
+                if (answer.sessionid) {
+                    livetalkingSessionId = String(answer.sessionid);
+                }
+                return pc.setRemoteDescription(new RTCSessionDescription(answer));
+            }).then(function() {
+                console.log("[LiveTalking] SDP exchange complete");
+            }).catch(function(err) {
+                reject(err);
+            });
+
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+
+/* ==========================================
+   页面加载时自动连接 LiveTalking
+   ========================================== */
+function autoConnectLiveTalking() {
+    initLiveTalking().then(function() {
+        console.log("[LiveTalking] auto connect success");
+    }).catch(function(err) {
+        console.warn("[LiveTalking] auto connect failed:", err.message);
+        livetalkingReady = false;
+        var placeholder = document.getElementById("avatar-placeholder");
+        if (placeholder) {
+            placeholder.innerHTML = '<div class="icon">⚠️</div><div><small>数字人不可用</small></div>';
+            placeholder.style.display = "flex";
+            placeholder.classList.add("unavailable");
+        }
+    });
 }
 
 
@@ -234,23 +177,20 @@ function waitForIceGathering(pc) {
 
 
 /* ==========================================
-   发送文字到 LiveTalking（缓冲合并，避免频繁请求）
+   发送文字到 LiveTalking（不可用时静默跳过）
    ========================================== */
-function sendToLiveTalking() {
-    if (!livetalkingReady || !pendingText) return;
+function sendToLiveTalking(text) {
+    if (!livetalkingReady || !text) return;
 
-    const textToSend = pendingText;
-    pendingText = "";
-
-    console.log("[LiveTalking] sending text:", textToSend.substring(0, 50) + "...");
+    console.log("[LiveTalking] sending text:", text.substring(0, 50) + "...");
 
     fetch(LIVETALKING_URL + "/human", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            text: textToSend,
+            text: text,
             type: "echo",
-            interrupt: true,
+            interrupt: false,
             sessionid: livetalkingSessionId,
         }),
     })
@@ -267,16 +207,6 @@ function sendToLiveTalking() {
     .catch(function(err) {
         console.error("[LiveTalking] /human error:", err);
     });
-}
-
-function flushPendingText() {
-    if (pendingText) {
-        sendToLiveTalking();
-    }
-    if (textSendTimer) {
-        clearTimeout(textSendTimer);
-        textSendTimer = null;
-    }
 }
 
 
@@ -372,10 +302,6 @@ async function sendMessage() {
     input.value = "";
     appendMessage("user", text);
 
-    // 重置 LiveTalking 文字缓冲
-    pendingText = "";
-    flushPendingText();
-
     // 创建 bot 消息占位
     currentBotMsg = appendMessage("bot", "");
     currentBotText = "";
@@ -447,11 +373,6 @@ function handleSSEEvent(data, cursor) {
                 if (cursor) currentBotMsg.appendChild(cursor);
             }
             scrollToBottom();
-
-            // 缓冲文字（不立即发送，等 done 或超时后一次性发）
-            pendingText += data.content;
-            if (textSendTimer) clearTimeout(textSendTimer);
-            textSendTimer = setTimeout(flushPendingText, TEXT_SEND_DELAY);
             break;
 
         case "mood":
@@ -469,8 +390,6 @@ function handleSSEEvent(data, cursor) {
         case "done":
             hideStatus();
             if (cursor && cursor.parentNode) cursor.remove();
-            // 发送剩余文字到 LiveTalking
-            flushPendingText();
             break;
     }
 }
@@ -535,6 +454,8 @@ window.addEventListener("beforeunload", function() {
 
 
 /* ==========================================
-   页面加载时不自动连接，等用户点击按钮
+   页面加载时自动连接 LiveTalking
    ========================================== */
-// initLiveTalking() 由"连接"按钮触发
+window.addEventListener("DOMContentLoaded", function() {
+    autoConnectLiveTalking();
+});

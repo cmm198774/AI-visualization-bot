@@ -132,53 +132,13 @@ body {
     margin-bottom: 12px;
 }
 
-/* 控制按钮（开始/结束） */
-.avatar-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 16px;
+/* 数字人不可用状态 */
+.avatar-placeholder.unavailable {
+    background: #fef2f2;
 }
 
-.btn-avatar {
-    padding: 8px 20px;
-    border-radius: 8px;
-    border: none;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.btn-start {
-    background: #10b981;
-    color: #fff;
-}
-
-.btn-start:hover {
-    background: #059669;
-}
-
-.btn-stop {
-    background: #ef4444;
-    color: #fff;
-}
-
-.btn-stop:hover {
-    background: #dc2626;
-}
-
-.avatar-status {
-    font-size: 13px;
-    color: #9ca3af;
-    padding: 4px 12px;
-    border-radius: 12px;
-    background: #f3f4f6;
-}
-
-.avatar-status.connected {
-    color: #10b981;
-    background: #ecfdf5;
+.avatar-placeholder.unavailable .icon {
+    filter: grayscale(0.5);
 }
 
 .mood-indicator {
