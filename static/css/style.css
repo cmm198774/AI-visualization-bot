@@ -273,6 +273,11 @@ body {
     background: #3b7aed;
 }
 
+.chat-input-area button:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+}
+
 /* 滚动条 */
 .chat-messages::-webkit-scrollbar {
     width: 4px;

@@ -29,6 +29,82 @@ let livetalkingSessionId = "0";
 
 
 /* ==========================================
+   发送按钮状态管理（Proxy 响应式）
+   ========================================== */
+const callState = {
+    isConnecting: true,
+    isSending: false,
+    isSpeaking: false,
+};
+
+const callStateProxy = new Proxy(callState, {
+    set: function(target, key, value) {
+        target[key] = value;
+        updateSendButton();
+        return true;
+    },
+});
+
+let speakPollTimer = null;
+
+function updateSendButton() {
+    var btn = document.getElementById("send-btn");
+    if (!btn) return;
+    var locked = callState.isConnecting || callState.isSending || callState.isSpeaking;
+    btn.disabled = locked;
+    if (locked) {
+        btn.style.opacity = "0.5";
+        btn.style.cursor = "not-allowed";
+    } else {
+        btn.style.opacity = "1";
+        btn.style.cursor = "pointer";
+    }
+}
+
+function startSpeakPolling() {
+    stopSpeakPolling();
+    callStateProxy.isSpeaking = true;
+    var pollCount = 0;
+    var failCount = 0;
+    var maxPolls = 600; // 50ms * 600 = 30s 超时保护
+    var maxFails = 200; // 连续失败 200 次（10s）也解锁
+    speakPollTimer = setInterval(function() {
+        pollCount++;
+        if (pollCount >= maxPolls) {
+            console.warn("[LiveTalking] speak polling timeout (30s), force unlock");
+            callStateProxy.isSpeaking = false;
+            stopSpeakPolling();
+            return;
+        }
+        fetch(LIVETALKING_URL + "/is_speaking", { method: "POST" })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                failCount = 0;
+                if (!data.speaking) {
+                    stopSpeakPolling();
+                    callStateProxy.isSpeaking = false;
+                }
+            })
+            .catch(function() {
+                failCount++;
+                if (failCount >= maxFails) {
+                    console.warn("[LiveTalking] /is_speaking failed 200 times, force unlock");
+                    stopSpeakPolling();
+                    callStateProxy.isSpeaking = false;
+                }
+            });
+    }, 50);
+}
+
+function stopSpeakPolling() {
+    if (speakPollTimer) {
+        clearInterval(speakPollTimer);
+        speakPollTimer = null;
+    }
+}
+
+
+/* ==========================================
    关闭 WebRTC 连接
    ========================================== */
 function closeLiveTalking() {
@@ -164,9 +240,11 @@ function initLiveTalking() {
 function autoConnectLiveTalking() {
     initLiveTalking().then(function() {
         console.log("[LiveTalking] auto connect success");
+        callStateProxy.isConnecting = false;
     }).catch(function(err) {
         console.warn("[LiveTalking] auto connect failed:", err.message);
         livetalkingReady = false;
+        callStateProxy.isConnecting = false;
         var placeholder = document.getElementById("avatar-placeholder");
         if (placeholder) {
             placeholder.innerHTML = '<div class="icon">⚠️</div><div><small>数字人不可用</small></div>';
@@ -324,6 +402,8 @@ async function sendMessage() {
     input.value = "";
     appendMessage("user", text);
 
+    callStateProxy.isSending = true;
+
     // 创建 bot 消息占位
     currentBotMsg = appendMessage("bot", "");
     currentBotText = "";
@@ -375,6 +455,8 @@ async function sendMessage() {
     }
     currentBotMsg = null;
     currentBotText = "";
+
+    callStateProxy.isSending = false;
 }
 
 
@@ -414,6 +496,10 @@ function handleSSEEvent(data, cursor) {
         case "done":
             hideStatus();
             if (cursor && cursor.parentNode) cursor.remove();
+            // 如果 LiveTalking 可用，启动轮询等数字人说完
+            if (livetalkingReady) {
+                startSpeakPolling();
+            }
             break;
     }
 }
@@ -481,5 +567,6 @@ window.addEventListener("beforeunload", function() {
    页面加载时自动连接 LiveTalking
    ========================================== */
 window.addEventListener("DOMContentLoaded", function() {
+    updateSendButton();
     autoConnectLiveTalking();
 });
