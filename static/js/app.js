@@ -78,6 +78,10 @@ function initLiveTalking() {
                 console.log("[LiveTalking] received track:", evt.track.kind);
                 if (evt.track.kind === "video") {
                     videoElement.srcObject = evt.streams[0];
+                    // Edge/Chromium 需要显式调用 play()
+                    videoElement.play().catch(function(e) {
+                        console.warn("[LiveTalking] autoplay failed:", e.message);
+                    });
                 }
             });
 
@@ -96,6 +100,14 @@ function initLiveTalking() {
 
             pc.addTransceiver("video", { direction: "recvonly" });
             pc.addTransceiver("audio", { direction: "recvonly" });
+
+            // 15 秒连接超时（Edge 下 ICE 可能卡住）
+            var connectTimeout = setTimeout(function() {
+                if (!livetalkingReady) {
+                    pc.close();
+                    reject(new Error("WebRTC 连接超时（15s）"));
+                }
+            }, 15000);
 
             pc.createOffer().then(function(offer) {
                 return pc.setLocalDescription(offer);
@@ -126,8 +138,18 @@ function initLiveTalking() {
             }).then(function() {
                 console.log("[LiveTalking] SDP exchange complete");
             }).catch(function(err) {
+                clearTimeout(connectTimeout);
                 reject(err);
             });
+
+            // 连接成功后清除超时
+            var origOnStateChange = pc.onconnectionstatechange;
+            pc.onconnectionstatechange = function() {
+                if (pc.connectionState === "connected") {
+                    clearTimeout(connectTimeout);
+                }
+                if (origOnStateChange) origOnStateChange.call(pc);
+            };
 
         } catch (err) {
             reject(err);
@@ -373,6 +395,8 @@ function handleSSEEvent(data, cursor) {
                 if (cursor) currentBotMsg.appendChild(cursor);
             }
             scrollToBottom();
+            // 把文字发给 LiveTalking 让数字人说话
+            sendToLiveTalking(data.content);
             break;
 
         case "mood":
