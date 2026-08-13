@@ -76,11 +76,15 @@ function startSpeakPolling() {
             stopSpeakPolling();
             return;
         }
-        fetch(LIVETALKING_URL + "/is_speaking", { method: "POST" })
+        fetch(LIVETALKING_URL + "/is_speaking", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionid: livetalkingSessionId }),
+        })
             .then(function(res) { return res.json(); })
-            .then(function(data) {
+            .then(function(resp) {
                 failCount = 0;
-                if (!data.speaking) {
+                if (resp.code === 0 && resp.data === false) {
                     stopSpeakPolling();
                     callStateProxy.isSpeaking = false;
                 }
@@ -154,7 +158,6 @@ function initLiveTalking() {
                 console.log("[LiveTalking] received track:", evt.track.kind);
                 if (evt.track.kind === "video") {
                     videoElement.srcObject = evt.streams[0];
-                    // Edge/Chromium 需要显式调用 play()
                     videoElement.play().catch(function(e) {
                         console.warn("[LiveTalking] autoplay failed:", e.message);
                     });

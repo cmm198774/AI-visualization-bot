@@ -116,9 +116,100 @@
 - [ ] 需要生成 Lisa 数字人照片
 - [ ] 创建 Lisa 专属 avatar_id
 
-#### Phase 3f：自动连接优化（待讨论）
-- [ ] 去掉手动开始/结束按钮，实现自动连接
-- [ ] 方案待定：页面加载时自动连接 / 用户首次发消息时自动连接
+#### Phase 3f：自动连接 + 按钮锁定 ✅（2026-08-13）
+
+**Step 1：自动连接（`66cf9ea` + `4511ae5`）**
+- [x] 移除手动开始/结束按钮
+- [x] 页面加载时自动连接 LiveTalking（`autoConnectLiveTalking()`）
+- [x] 连接失败时显示"数字人不可用"（不影响文字聊天）
+- [x] 15 秒连接超时（防止 Edge 下 ICE 卡住）
+- [x] Edge 兼容性修复：显式 `play()` 调用 + `muted` 属性（自动播放策略）
+- [x] `sendToLiveTalking()` 在 SSE text 事件中调用（让数字人说话）
+
+**Step 2：发送按钮锁定（`01f069a`）**
+- [x] `callState` Proxy 追踪 3 个状态：`isConnecting` / `isSending` / `isSpeaking`
+- [x] 按钮默认禁用（连接中），连接成功/失败后解锁
+- [x] 发送时锁定（`isSending=true`），SSE `done` 后启动轮询
+- [x] 50ms 轮询 `/is_speaking`，数字人说完后解锁
+- [x] 30s 超时 + 10s 连续失败兜底（防止死锁）
+- [x] CSS `:disabled` 样式（灰色背景 + 禁止光标）
+
+**LiveTalking `is_speaking()` 增强（`38f3e28`）**
+- [x] 新增 TTS 消息队列检查（`tts.msgqueue.qsize() > 0`）
+- [x] 新增视频输出 buffer 检查（`output.get_buffer_size() > 0`）
+- [x] 结合原有 `self.speaking` 标志，返回更准确的忙碌状态
+
+**前端按钮改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `static/index.html` | 移除 `.avatar-controls` 控制栏，video 添加 `muted` 属性 |
+| `static/js/app.js` | 新增 `callState` Proxy、`updateSendButton()`、`startSpeakPolling()`、`stopSpeakPolling()` |
+| `static/css/style.css` | 新增 `.avatar-placeholder.unavailable` 样式 + `button:disabled` 样式 |
+
+**Step 3：Chunk 流水线优化 ✅（2026-08-13）**
+
+**目标**：将长文本（200+ 字）的首帧延迟从 10+ 秒降低到 4-6 秒，chunk 之间无缝衔接。
+
+**最终方案**：
+- [x] 新建 `server/chunk_processor.py`：`split_sentences()` + `chunk_sentences()` + `TextChunkQueue`
+- [x] 修改 `avatars/base_avatar.py`：`put_msg_txt` 委托 chunk_processor
+- [x] 修改 `config.py`：新增 `--chunk_size`（默认 50）和 `--pre_buffer_count`（保留未用）参数
+- [x] 所有 chunks 一次性全部送入 TTS 队列，TTS 线程连续处理
+- [x] 移除后台线程和 hold 模式（视频不再冻结）
+- [x] TTS 处理完一个 chunk 立即进入 ASR→推理→播放流水线，chunk 间无缝衔接
+
+**方案演进过程（踩坑记录）**：
+
+| 阶段 | 方案 | 问题 | 原因 |
+|------|------|------|------|
+| V1 | 后台线程逐 chunk 送入，等 `speaking=False` 再送下一个 | chunk 间有 ~1.5s 停顿 | 每个 chunk 播完才送下一个，TTS 生成需要时间 |
+| V2 | 只等 `tts.msgqueue==0`（文本被取走），不等 speaking | chunk 间有 3-4s 静音 | TTS 还在生成，前一个 chunk 音频已播完，中间空了 |
+| V3 | 预缓冲：hold 模式冻结视频，预入队 chunk1+chunk2 | 发送时视频冻结 1.5s | hold 暂存视频帧，观感差 |
+| **V4（最终）** | 所有 chunks 一次性全部送入 TTS 队列 | 无问题 ✅ | TTS 连续处理，每完成一个 chunk 立即播放 |
+
+**关键洞察**：
+- TTS 生成 ~1.5s/chunk（50 字），播放 ~3s/chunk
+- TTS 远快于播放，根本不需要预缓冲
+- LiveTalking 原有架构：`txt_to_audio()` 完成后音频帧立即进入 ASR→推理→播放流水线
+- 所有 chunks 一次性入队，TTS 线程连续处理，即可实现无缝流水线
+
+**踩坑详情**：
+
+1. **短文本死锁（V1 阶段）**：
+   - 现象：chunk 数 ≤ pre_buffer_count 时，hold 模式不释放，视频冻结
+   - 解决：添加 `_use_prebuffer` 标志，短文本跳过 hold
+
+2. **is_speaking 始终返回 True（V1 阶段）**：
+   - 现象：诊断发现 `video_buf > 0` 始终为真
+   - 原因：推理线程持续输出静音帧，视频队列不会空
+   - 解决：`is_speaking()` 只检查 3 个条件：chunk_processor.is_busy()、tts.msgqueue、avatar.speaking
+
+3. **前端 is_speaking 调用失败（V1 阶段）**：
+   - 现象：控制台报 "[LiveTalking] /is_speaking failed 200 times, force unlock"
+   - 原因：没传 `sessionid` 参数 → LiveTalking 返回 "session not found"；前端检查 `data.speaking` 但实际返回 `{code: 0, data: true/false}`
+   - 解决：传入 `sessionid`，检查 `resp.data === false`
+
+**LiveTalking 改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `server/chunk_processor.py` | 新建：`split_sentences()`、`chunk_sentences()`、`TextChunkQueue`（一次性入队方案） |
+| `avatars/base_avatar.py` | 集成 chunk_processor，移除 `_feed_text_to_tts` |
+| `config.py` | 新增 `--chunk_size`、`--pre_buffer_count` 参数 |
+| `server/webrtc.py` | 保留 `enter_hold_mode()`、`release_buffer()`（未来可能用） |
+
+**前端改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `static/js/app.js` | `startSpeakPolling()` 传入 `sessionid`，检查 `resp.data === false` |
+
+**当前 Commit 状态**：
+- Lisa 仓库：最新
+- LiveTalking 仓库：`8eb5bf0`（最新）
+
+**性能指标**（400 字文本，8 个 chunks）：
+- 首帧延迟：~2s（之前 10+ 秒）
+- chunk 间停顿：0（无缝衔接）
+- 视频流畅度：始终流畅（无冻结）
 
 #### Phase 3e：LiveTalking 稳定性修复 ✅（2026-08-10）
 

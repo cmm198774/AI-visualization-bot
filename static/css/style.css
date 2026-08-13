@@ -109,6 +109,8 @@ body {
     height: 100%;
     object-fit: cover;
     border-radius: 14px;
+    position: relative;
+    z-index: 2;
 }
 
 /* 占位符（连接中/失败时显示） */
