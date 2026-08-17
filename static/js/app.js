@@ -480,8 +480,8 @@ function handleSSEEvent(data, cursor) {
                 if (cursor) currentBotMsg.appendChild(cursor);
             }
             scrollToBottom();
-            // 把文字发给 LiveTalking 让数字人说话
-            sendToLiveTalking(data.content);
+            // 把文字发给 LiveTalking 让数字人说话（使用清洗后的文本）
+            sendToLiveTalking(data.tts_content || data.content);
             break;
 
         case "mood":

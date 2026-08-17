@@ -27,6 +27,7 @@ from agent import create_agent_graph
 from tools import get_info_from_local_db, TOOL_DESCRIPTIONS
 from database import init_db, create_user, get_user_by_username
 from auth import verify_password, get_password_hash, create_access_token
+from text_utils import clean_text_for_tts
 
 
 # ==========================================
@@ -88,7 +89,10 @@ LISA_SYSTEM_PROMPT = (
     "以下是你问答的过程：\n"
     "    1. 每次老板问你问题，如果你不知道怎么回答，优先尝试查询本地知识库。\n"
     "    2. 如果本地知识库没有相关信息，尝试使用网络搜索工具从网上获取信息。\n"
-    "    3. 如果搜索也找不到，就如实告诉老板你不知道，不要编造答案。"
+    "    3. 如果搜索也找不到，就如实告诉老板你不知道，不要编造答案。\n\n"
+    "以下是你的表达规范：\n"
+    "    1. 你直接说话，不使用括号或任何形式的旁白、舞台指示（如（微笑）、（点头）、*挥手*等）。\n"
+    "    2. 你的回答就是纯粹的对话内容，不要添加动作描述或心理活动描述。"
 )
 
 
@@ -336,7 +340,12 @@ async def _event_stream(query: str, user_id: str):
             final_message = "抱歉，我暂时无法回复。"
 
         # 输出完整文本（TTS 由 LiveTalking 负责）
-        text_data = json.dumps({"type": "text", "content": final_message}, ensure_ascii=False)
+        # content 保留原始格式用于显示，tts_content 清洗后用于数字人朗读
+        tts_content = clean_text_for_tts(final_message)
+        text_data = json.dumps(
+            {"type": "text", "content": final_message, "tts_content": tts_content},
+            ensure_ascii=False,
+        )
         yield "data: " + text_data + "\n\n"
 
         # 发送情绪标签
