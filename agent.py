@@ -257,8 +257,14 @@ def create_agent_graph(
 
             # 检测内容审核失败（DataInspectionFailed）
             if "DataInspectionFailed" in error_str or "inappropriate content" in error_str:
-                logger.warning(f"[{user_id}] 情绪检测：内容审核失败，跳过敏感消息")
-                return {"mood": "sensitive", "skip_count": 1}
+                logger.warning(f"[{user_id}] 情绪检测：内容审核失败，替换敏感消息内容")
+                # 替换敏感消息内容为安全占位符（同 ID 会被 add_messages 更新）
+                # 防止敏感内容留在 messages 中污染后续所有 LLM 调用
+                sanitized = HumanMessage(
+                    content="[用户消息因内容规范被过滤]",
+                    id=last_msg.id,
+                )
+                return {"mood": "sensitive", "skip_count": 1, "messages": [sanitized]}
 
             logger.warning(f"[{user_id}] 情绪检测失败 ({elapsed:.1f}s): {e}, fallback=default")
             return {"mood": "default", "skip_count": 0}

@@ -41,7 +41,7 @@
 - [x] 情绪覆盖机制（mood_override 存储在 Redis，detect_mood_node 优先检查）
 
 ### 关键改进
-- **敏感内容处理**: detect_mood 捕获 DataInspectionFailed，通过 skip_count 机制跳过敏感消息，防止上下文污染
+- **敏感内容处理**: detect_mood 捕获 DataInspectionFailed，通过同 ID 消息替换机制清除敏感内容（解决首句敏感消息污染后续对话的 bug）
 - **状态去重**: thinking 状态只显示一次（LLM 可能调用多次）
 - **消息压缩策略**:
   - 摘要压缩到 memory_token_limit/3（约 10000 字）
@@ -205,7 +205,7 @@
 | `static/js/app.js` | `startSpeakPolling()` 传入 `sessionid`，检查 `resp.data === false` |
 
 **当前 Commit 状态**（2026-08-17 同步到 GitHub）：
-- Lisa 仓库：`a70f200`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
+- Lisa 仓库：`8745fc9`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
 - LiveTalking 仓库：`f80602c`（main）→ `git@github.com:cmm198774/LiveTalking-Local-Modified.git`
 
 **本次同步内容（2026-08-17）**：
@@ -242,6 +242,38 @@
 | `avatars/base_avatar.py` `inference()` | 新增 `silent_mask` 检测，静音帧推理结果放 `None` 到队列 |
 | `avatars/base_avatar.py` `process_frames()` | 新增 `res_frame is None` 分支，走原始帧；初始化 `_last_speaking_frame`/`_last_silent_frame` 防 UnboundLocalError |
 | `tts/edge.py` | 恢复原始代码（移除音频淡出） |
+
+#### Phase 3h：TTS 文本清洗 + 敏感消息首句修复 ✅（2026-08-17）
+
+**问题 1：数字人朗读 emoji 和特殊符号**
+- LLM 回答中包含 emoji（😊）、`*`、`#` 等符号，数字人会读出来
+- 解决：新建 `text_utils.py`，`clean_text_for_tts()` 去除 emoji 和 `*#`，保留中文/英文/数字
+- SSE 输出新增 `tts_content` 字段（清洗后文本），前端 `sendToLiveTalking()` 使用 `tts_content`
+- 聊天界面显示原始文本（保留 emoji），数字人朗读清洗后文本
+
+**问题 2：LLM 输出括号旁白**
+- LLM 偶尔生成 `（微笑）`、`*挥手*` 等旁白内容
+- 解决：修改系统提示词（`LISA_SYSTEM_PROMPT`），添加"表达规范"段落，禁止任何形式的旁白和舞台指示
+
+**问题 3：首句敏感消息污染后续所有对话**
+- 新用户第一句话触发 DataInspectionFailed → `skip_count=1` 跳过消息，但 `compacted_count` 未更新
+- 敏感消息留在 `messages` 中 → 后续每次 compact 都重新包含 → 每次 LLM 调用都触发 DataInspectionFailed
+- 解决：`detect_mood_node` 捕获 DataInspectionFailed 时，用同 ID 的 `HumanMessage` 替换敏感内容
+- `add_messages` reducer 按 ID 匹配并更新（已验证），敏感内容被替换为 `[用户消息因内容规范被过滤]`
+
+**踩坑记录**：
+1. **emoji 正则范围太宽**：`\U000024C2-\U0001F251` 覆盖了中文字符区（U+4E00-U+9FFF），导致中文/英文全部被清除。修复：拆为窄范围 `\U000024C2-\U000024FF`（仅 enclosed alphanumerics）
+2. **bat 脚本编码问题**：`.bat` 文件保存为 UTF-8 + `chcp 65001`，cmd.exe 解析多字节中文时行错位（`'1' 不是内部命令`）。修复：用 GBK 编码写 `.bat`，`chcp 936`
+
+**改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `text_utils.py` | 新建，`clean_text_for_tts()` 函数（emoji 正则 + `*#` 去除 + 空格合并） |
+| `server.py` | 导入 `clean_text_for_tts`，SSE 输出新增 `tts_content` 字段，系统提示词添加表达规范 |
+| `agent.py` | `detect_mood_node` DataInspectionFailed 分支：返回同 ID 安全消息替换敏感内容 |
+| `static/js/app.js` | `sendToLiveTalking(data.tts_content \|\| data.content)` 使用清洗后文本 |
+| `start_lisa.bat` | 新建，一键启动 LiveTalking + Lisa 服务（GBK 编码，`chcp 936`） |
+| `stop_lisa.bat` | 新建，一键关闭 Lisa + LiveTalking + Redis（按端口查 PID） |
 
 #### Phase 3e：LiveTalking 稳定性修复 ✅（2026-08-10）
 
@@ -311,6 +343,9 @@ conda run -n py310 python server.py
 ├── sys_logger.py          # 全局日志系统（终端 + 文件双输出）
 ├── sys_memory.py          # RedisSaver（LangGraph checkpoint 持久化 + 命令系统方法）
 ├── start_redis.py         # Redis 服务器管理（启动/停止）
+├── text_utils.py          # 文本清洗工具（TTS 去 emoji/*/#，供 sendToLiveTalking 使用）
+├── start_lisa.bat         # 一键启动 LiveTalking + Lisa 服务（GBK 编码）
+├── stop_lisa.bat          # 一键关闭 Lisa + LiveTalking + Redis（GBK 编码）
 ├── users.db               # SQLite 用户数据库文件（运行时生成）
 │
 ├── static/                # 前端文件
@@ -361,6 +396,15 @@ conda run -n py310 python server.py
 - **测试文件必须放在 `tests/` 目录下**，不得在项目根目录创建 `test_*.py` 文件。根目录只放业务代码和配置文件。
 
 ## 运行方式
+
+### 一键启动/关闭（推荐）
+```bash
+# 双击或命令行运行：
+start_lisa.bat    # 启动 LiveTalking + Lisa 服务（两个独立终端窗口）
+stop_lisa.bat     # 关闭 Lisa(8000) + LiveTalking(8010) + Redis(6379)
+```
+
+### 手动启动
 ```bash
 # 需要两个终端分别启动：
 

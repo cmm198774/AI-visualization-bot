@@ -1,94 +1,103 @@
 # Lisa 的办公室 - AI 可视化聊天机器人
 
-一个带 MuseTalk 数字人虚拟形象的 AI 聊天机器人，支持流式文本输出、WebRTC 实时视频流、情绪检测、用户认证、斜杠命令系统。
+一个带 MuseTalk 数字人虚拟形象的 AI 聊天机器人。Lisa 是你的私人 AI 秘书，拥有实时口型同步的数字人形象，支持流式文本输出、情绪感知、知识库查询和对话记忆。
 
-## 技术栈
+## 功能一览
 
-- **后端**: FastAPI + SSE 流式输出
-- **Agent**: LangGraph（全异步）
-- **LLM**: qwen3.6-flash（阿里云 Token Plan）
-- **向量数据库**: Qdrant（RAG 知识库）
-- **缓存**: Redis（LangGraph checkpoint 持久化）
-- **用户数据库**: SQLite
-- **认证**: JWT token（python-jose + bcrypt）
-- **数字人**: MuseTalk + LiveTalking（WebRTC 实时口型同步视频流）
+- **数字人形象**：基于 MuseTalk 的实时口型同步视频流（WebRTC 低延迟传输）
+- **情绪感知**：自动检测用户情绪（6 种），动态调整回复语气
+- **知识库**：Qdrant 向量数据库 RAG，可导入自定义知识
+- **对话记忆**：Redis 持久化，每个用户独立记忆，支持手动压缩/清除
+- **用户系统**：注册/登录 + JWT 认证，多用户隔离
+- **命令系统**：斜杠命令管理对话状态
 
-## 功能特性
+---
 
-### 核心流程
-- 流式文本输出（SSE 实时推送）
-- 情绪检测（6 种情绪：cheerful / upbeat / friendly / depressed / angry / default）
-- 消息压缩（超过 token 上限自动摘要）
-- Qdrant RAG 知识库工具
-- 实时状态显示（检测情绪 → 压缩 → 思考 → 工具调用）
+## 使用指南
 
-### 用户系统
-- 用户注册 / 登录
-- JWT token 认证
-- 每个用户独立的对话记忆
+### 启动应用
 
-### 命令系统
+**方式一：一键启动（推荐）**
 
-在聊天框输入以 `/` 开头的命令：
+双击项目根目录下的 `start_lisa.bat`，会自动打开两个终端窗口：
+- **LiveTalking** 窗口：数字人服务（端口 8010）
+- **Lisa Server** 窗口：主聊天服务（端口 8000）
 
-| 命令 | 功能 | 示例 |
+等待约 10 秒（模型加载），两个窗口都显示 `running` 即可使用。
+
+**方式二：手动启动**
+
+需要两个终端分别执行（详见 [部署指南](#部署指南)）。
+
+### 打开聊天界面
+
+浏览器访问 **http://127.0.0.1:8000**
+
+- 首次使用需要先**注册账号**（用户名 + 密码，密码至少 6 位）
+- 登录后自动连接数字人视频流（右上角出现 Lisa 的视频画面）
+- 如果数字人连接失败，会显示"数字人不可用"，文字聊天不受影响
+
+### 聊天交互
+
+在底部输入框输入消息，按 **Enter** 或点击发送按钮：
+
+1. Lisa 会先进行**情绪检测**（状态栏显示"情绪检测 Xs"）
+2. 然后**整理对话上下文**（状态栏显示"整理对话 Xs"）
+3. 接着**思考回复**（状态栏显示"💭 思考 Xs"）
+4. 如果需要查询知识库，会显示"🔍 查询 Xs"
+5. 最后文字逐字显示在聊天框，数字人同步说话
+
+**注意**：数字人说话期间，发送按钮会自动锁定（灰色），说完后自动解锁。
+
+### 斜杠命令
+
+在聊天框输入以 `/` 开头的命令直接发送：
+
+| 命令 | 功能 | 说明 |
 |------|------|------|
-| `/clear` | 清除所有对话记忆 | `/clear` |
-| `/compact` | 手动压缩上下文 | `/compact` |
-| `/status` | 查看当前状态 | `/status` |
-| `/mood` | 查看当前情绪 | `/mood` |
-| `/mood <情绪>` | 手动设置情绪 | `/mood cheerful` |
-| `/help` | 显示帮助 | `/help` |
+| `/clear` | 清除所有对话记忆 | 重新开始对话，Lisa 会忘记之前聊过的内容 |
+| `/compact` | 手动压缩上下文 | 对话太长时手动触发摘要压缩 |
+| `/status` | 查看当前状态 | 显示 checkpoint 数量、token 用量、当前情绪 |
+| `/mood` | 查看当前情绪 | 显示 Lisa 当前感知到的情绪 |
+| `/mood <情绪>` | 手动设置情绪 | 覆盖自动检测，有效值：default / upbeat / angry / depressed / friendly / cheerful |
+| `/help` | 显示帮助 | 显示所有可用命令 |
 
-### 数字人（Phase 3）
-- MuseTalk 实时口型同步（基于唇部动作驱动）
-- WebRTC 实时视频流传输（本地直连，低延迟）
-- 页面加载自动连接 LiveTalking（15 秒超时，失败降级为纯文字聊天）
-- 发送按钮智能锁定（连接中/发送中/说话中禁用，说完自动解锁）
-- Chunk 流水线优化（长文本首帧延迟 ~2s，chunk 间无缝衔接）
-- Session 池复用（预创建 session，GPU 显存稳定 1613MB）
+### 关闭应用
 
-## 项目结构
+双击项目根目录下的 `stop_lisa.bat`，会自动关闭所有相关进程（Lisa 服务、LiveTalking、Redis）。
 
-```
-├── server.py              # FastAPI 主服务器，SSE 流式输出
-├── agent.py               # LangGraph Agent（4 节点）
-├── commands.py            # 命令处理模块
-├── memory_utils.py        # 消息压缩工具
-├── tools.py               # Qdrant RAG 工具
-├── config.py              # 配置加载
-├── database.py            # SQLite 用户数据库
-├── auth.py                # JWT 认证
-├── sys_logger.py          # 日志系统
-├── sys_memory.py          # RedisSaver（checkpoint 持久化）
-├── start_redis.py         # Redis 服务器管理
-├── .env.example           # 环境变量模板
-├── requirements.txt       # 依赖列表
-│
-├── static/                # 前端文件
-│   ├── index.html         # 主聊天页面
-│   ├── login.html         # 登录页面
-│   ├── css/               # 样式
-│   └── js/                # 前端逻辑（含 WebRTC 连接管理）
-│
-└── docs/                  # 项目文档
-    ├── custom/            # 项目设计文档
-    ├── superpowers/       # 设计规格和实施计划
-    └── test_reports/      # 测试报告
-```
+---
 
-## 快速开始
+## 部署指南
+
+### 环境要求
+
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| Python | 3.10（conda py310） | LiveTalking 依赖 |
+| PyTorch | 2.10.0+cu128 | CUDA 12.8 |
+| Redis | 5.0+ | 对话记忆持久化 |
+| GPU | NVIDIA（推荐 8GB+ 显存） | 数字人推理 |
 
 ### 1. 克隆项目
 
 ```bash
-git clone <repo-url>
-cd 20260725_Agent_AI可视化机器人
+# Lisa 主项目
+git clone https://github.com/cmm198774/AI-visualization-bot.git
+cd AI-visualization-bot
+
+# LiveTalking 数字人项目（单独克隆）
+git clone https://github.com/cmm198774/LiveTalking-Local-Modified.git
 ```
 
 ### 2. 安装依赖
 
 ```bash
+# Lisa 主项目依赖
+pip install -r requirements.txt
+
+# LiveTalking 依赖（详见 LiveTalking 仓库 README）
+cd LiveTalking-Local-Modified
 pip install -r requirements.txt
 ```
 
@@ -96,40 +105,63 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入你的 API 密钥
+# 编辑 .env，填入你的 API 密钥（LLM_API_KEY 必填）
 ```
 
-### 4. 准备 Redis
+### 4. 准备数字人素材
 
-```bash
-redis-server/redis-server.exe redis_cache/redis.conf
-```
+LiveTalking 需要预先生成的数字人素材（`data/avatars/lisa_avatar/`），包含：
+- `full_imgs/` — 原始帧图片
+- `mask/` — 面部 mask
+- `coords.pkl` — 面部坐标
+- `latents.pt` — VAE 编码特征
+
+使用 LiveTalking 的 `genavatar.py` 从视频生成素材，或从百度网盘下载预制素材（详见 CLAUDE.md）。
 
 ### 5. 启动服务
 
-需要**两个终端**分别启动：
-
-**终端 1 — LiveTalking 数字人服务（WebRTC 视频流）**：
+**一键启动**（推荐）：
 ```bash
-cd G:\JupyterProject\LiveTalking
-C:\ProgramData\Anaconda3\envs\py310\python.exe app.py \
-  --model musetalk --avatar_id lisa_avatar \
+# 双击或命令行运行
+start_lisa.bat
+```
+
+**手动启动**（两个终端）：
+
+终端 1 — LiveTalking 数字人服务：
+```bash
+cd LiveTalking-Local-Modified
+python app.py --model musetalk --avatar_id lisa_avatar \
   --transport webrtc --listenport 8010 --pool_size 2
 ```
 
-**终端 2 — Lisa 主服务（FastAPI + SSE 文字流）**：
+终端 2 — Lisa 主服务：
 ```bash
+cd AI-visualization-bot
 conda run -n py310 python server.py
 ```
 
-服务启动后访问 `http://127.0.0.1:8000`，页面会自动连接数字人视频流（连接失败时降级为纯文字聊天，不影响使用）。
+### 6. 访问
 
-### 6. 浏览器测试
+- 主界面：http://127.0.0.1:8000
+- LiveTalking 测试页：http://127.0.0.1:8010/webrtcapi.html
 
-- 访问 `http://127.0.0.1:8000` → Lisa 聊天主界面
-- 访问 `http://127.0.0.1:8010/webrtcapi.html` → LiveTalking 独立测试页
+---
 
-## Agent 架构
+## 技术架构
+
+### 技术栈
+
+- **后端**: FastAPI + SSE 流式输出
+- **Agent**: LangGraph（全异步，4 节点：detect_mood → compact → model → tools）
+- **LLM**: qwen3.6-flash（阿里云 Token Plan）
+- **向量数据库**: Qdrant（RAG 知识库）
+- **缓存**: Redis（LangGraph checkpoint 持久化）
+- **用户数据库**: SQLite
+- **认证**: JWT token（python-jose + bcrypt）
+- **数字人**: MuseTalk + LiveTalking（WebRTC 实时口型同步）
+
+### Agent 流程
 
 ```
 用户输入
@@ -152,7 +184,7 @@ conda run -n py310 python server.py
          └── 无 tool_calls → 返回最终响应
 ```
 
-## 整体架构（Phase 3）
+### 整体架构
 
 ```
 用户 → FastAPI → LangGraph → SSE（文字）→ 前端
@@ -162,55 +194,35 @@ conda run -n py310 python server.py
               WebRTC 视频流 → 前端 <video> 元素
 ```
 
-## Phase 3f 智能交互优化
+### 项目结构
 
-### 自动连接
-- 页面加载时自动建立 WebRTC 连接（15 秒超时）
-- 连接失败显示"数字人不可用"，不影响文字聊天
-- Edge 浏览器兼容：显式 `play()` 调用 + `muted` 属性
+```
+├── server.py              # FastAPI 主服务器，SSE 流式输出
+├── agent.py               # LangGraph Agent（4 节点）
+├── commands.py            # 命令处理模块
+├── memory_utils.py        # 消息压缩工具
+├── text_utils.py          # TTS 文本清洗（去 emoji/*/#）
+├── tools.py               # Qdrant RAG 工具
+├── config.py              # 配置加载
+├── database.py            # SQLite 用户数据库
+├── auth.py                # JWT 认证
+├── sys_logger.py          # 日志系统
+├── sys_memory.py          # RedisSaver（checkpoint 持久化）
+├── start_redis.py         # Redis 服务器管理
+├── start_lisa.bat         # 一键启动脚本
+├── stop_lisa.bat          # 一键关闭脚本
+├── .env                   # 环境变量配置
+│
+├── static/                # 前端文件
+│   ├── index.html         # 主聊天页面
+│   ├── login.html         # 登录页面
+│   ├── css/               # 样式
+│   └── js/                # 前端逻辑（含 WebRTC 连接管理）
+│
+└── docs/                  # 项目文档
+```
 
-### 发送按钮锁定
-- `callState` Proxy 追踪 3 个状态：`isConnecting` / `isSending` / `isSpeaking`
-- 连接中 / 发送中 / 数字人说话中 → 按钮禁用
-- 50ms 轮询 `/is_speaking`，说完自动解锁
-- 30s 超时 + 10s 连续失败兜底（防死锁）
-
-### Chunk 流水线
-- 长文本自动分句（`split_sentences()`）+ 分块（`chunk_sentences()`，默认 50 字/chunk）
-- 所有 chunks 一次性全部送入 TTS 队列，TTS 线程连续处理
-- 每完成一个 chunk 立即进入 ASR→推理→播放流水线，chunk 间无缝衔接
-- 400 字文本（8 个 chunks）：首帧延迟 ~2s，chunk 间停顿 0
-
-## Phase 3g 唇型抽搐修复
-
-**问题**：话音结束时嘴唇出现约 10 帧的不自然抽搐。
-
-**原因**：音频尾部进入静音区间后，Whisper 特征提取的 sliding window 混合了历史说话帧与静音帧，导致 MuseTalk 推理结果不稳定。
-
-**修复**（LiveTalking 侧）：
-- `inference()` 检测静音帧（`AudioFrameData.type != 0`），生成 `silent_mask`
-- 静音帧的推理结果用 `None` 替代，`process_frames()` 走静音分支直接使用原始视频帧
-- 避免对不稳定推理结果调用 `paste_back_frame()`，从根源消除嘴型抽搐
-
-## API 端点
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/chat` | SSE 流式聊天 |
-| POST | `/api/register` | 用户注册 |
-| POST | `/api/login` | 用户登录 |
-| GET | `/` | 主页 |
-
-**LiveTalking API（独立服务，端口 8010）**：
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/offer` | 建立 WebRTC 连接 |
-| POST | `/human` | 发送文字，触发数字人说话 |
-| GET | `/is_speaking?sessionid=xxx` | 查询数字人是否在说话 |
-| GET | `/webrtcapi.html` | WebRTC 前端测试页 |
-
-## 重要配置
+## 配置参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -221,13 +233,25 @@ conda run -n py310 python server.py
 | `TEXT_SEND_DELAY` | 500 | 前端文字缓冲延迟（ms） |
 | `SENTENCE_INTERVAL` | 1000 | 数字人说话句间间隔（ms） |
 
-## 环境要求
+## API 端点
 
-| 依赖 | 版本 | 说明 |
+**Lisa 主服务（端口 8000）**：
+
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| Python | 3.10（conda py310） | LiveTalking 依赖 |
-| PyTorch | 2.10.0+cu128 | CUDA 12.8，RTX 5090D 加速 |
-| Node.js | ≥18 | 前端构建 |
+| POST | `/chat` | SSE 流式聊天（返回 text/mood/status/done 事件） |
+| POST | `/api/register` | 用户注册 |
+| POST | `/api/login` | 用户登录 |
+| GET | `/` | 主页 |
+
+**LiveTalking 服务（端口 8010）**：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/offer` | 建立 WebRTC 连接 |
+| POST | `/human` | 发送文字，触发数字人说话 |
+| GET | `/is_speaking?sessionid=xxx` | 查询数字人是否在说话 |
+| GET | `/webrtcapi.html` | WebRTC 独立测试页 |
 
 ## License
 
