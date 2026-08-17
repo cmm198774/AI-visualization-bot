@@ -202,9 +202,13 @@
 |---|---|
 | `static/js/app.js` | `startSpeakPolling()` 传入 `sessionid`，检查 `resp.data === false` |
 
-**当前 Commit 状态**：
-- Lisa 仓库：最新
-- LiveTalking 仓库：`8eb5bf0`（最新）
+**当前 Commit 状态**（2026-08-13 同步到 GitHub）：
+- Lisa 仓库：`678babb`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
+- LiveTalking 仓库：`bfd1b20`（main）→ `git@github.com:cmm198774/LiveTalking-Local-Modified.git`
+
+**本次同步内容**：
+- Lisa：Phase 3f 前端改动（自动连接、按钮锁定、chunk 流水线）+ README 更新（Phase 3f 功能、/is_speaking API、架构图修复）+ 设计文档（spec + plan）
+- LiveTalking：chunk 测试文件（test_chunk_detailed.py、test_chunk_pipeline.py）+ README 新增"本地修改说明"（SessionPool、Chunk 流水线、GPU 资源管理、启动命令）
 
 **性能指标**（400 字文本，8 个 chunks）：
 - 首帧延迟：~2s（之前 10+ 秒）

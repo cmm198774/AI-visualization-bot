@@ -113,7 +113,7 @@ redis-server/redis-server.exe redis_cache/redis.conf
 ```bash
 cd G:\JupyterProject\LiveTalking
 C:\ProgramData\Anaconda3\envs\py310\python.exe app.py \
-  --model musetalk --avatar_id musetalk_avatar1 \
+  --model musetalk --avatar_id lisa_avatar \
   --transport webrtc --listenport 8010 --pool_size 2
 ```
 
@@ -180,6 +180,17 @@ conda run -n py310 python server.py
 - 所有 chunks 一次性全部送入 TTS 队列，TTS 线程连续处理
 - 每完成一个 chunk 立即进入 ASR→推理→播放流水线，chunk 间无缝衔接
 - 400 字文本（8 个 chunks）：首帧延迟 ~2s，chunk 间停顿 0
+
+## Phase 3g 唇型抽搐修复
+
+**问题**：话音结束时嘴唇出现约 10 帧的不自然抽搐。
+
+**原因**：音频尾部进入静音区间后，Whisper 特征提取的 sliding window 混合了历史说话帧与静音帧，导致 MuseTalk 推理结果不稳定。
+
+**修复**（LiveTalking 侧）：
+- `inference()` 检测静音帧（`AudioFrameData.type != 0`），生成 `silent_mask`
+- 静音帧的推理结果用 `None` 替代，`process_frames()` 走静音分支直接使用原始视频帧
+- 避免对不稳定推理结果调用 `paste_back_frame()`，从根源消除嘴型抽搐
 
 ## API 端点
 
