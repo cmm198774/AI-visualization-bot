@@ -77,13 +77,13 @@
 | LiveTalking 代码 | `G:\JupyterProject\LiveTalking\` |
 | LiveTalking GitHub | `git@github.com:cmm198774/LiveTalking-Local-Modified.git` |
 | 模型文件 | `G:\JupyterProject\LiveTalking\models\`（musetalkV15、sd-vae、whisper、dwpose、face-parse-bisent） |
-| 数字人素材 | `G:\JupyterProject\LiveTalking\data\avatars\musetalk_avatar1\` |
+| 数字人素材 | `G:\JupyterProject\LiveTalking\data\avatars\lisa_avatar\` |
 | 测试脚本 | `tests/test_livetalking_py310.py` |
 
 **大文件百度网盘**（模型 4.6GB + 素材 336MB）：
 - 链接：https://pan.baidu.com/s/1uokpYFLX23zebEv0PbJ46Q 提取码: 26a5
 - `models_all.zip` → 解压到 `models/` 目录
-- `avatar_data.zip` → 解压到 `data/avatars/musetalk_avatar1/`
+- `avatar_data.zip` → 解压到 `data/avatars/musetalk_avatar1/`（Lisa 形象用 `lisa_avatar/`，从视频生成）
 
 #### Phase 3b：server.py 改造 ✅
 - [x] 移除 edge-tts 相关代码（删除 tts_client.py、sentence_splitter.py）
@@ -112,9 +112,11 @@
 | `static/js/app.js` | 新增 `_resetLiveTalking()`、`startLiveTalking()`、`stopLiveTalking()`、`updateAvatarButtons()` |
 | `static/css/style.css` | 新增按钮样式（`.btn-start` 绿色 / `.btn-stop` 红色）+ `.avatar-status` 状态标签 |
 
-#### Phase 3d：Lisa 形象定制（待开始）
-- [ ] 需要生成 Lisa 数字人照片
-- [ ] 创建 Lisa 专属 avatar_id
+#### Phase 3d：Lisa 形象定制 ✅（2026-08-17）
+- [x] 从视频 `LisaLongCropped.mp4` 生成 Lisa 数字人素材（用户手动裁剪左右空白后提供）
+- [x] 使用 `genavatar.py` 提取 `full_imgs/`、`mask/`、`coords.pkl`、`latents.pt`
+- [x] 创建 `lisa_avatar` 目录（`data/avatars/lisa_avatar/`）
+- [x] 启动命令 `--avatar_id lisa_avatar` 验证通过，WebRTC 视频流正常显示 Lisa 形象
 
 #### Phase 3f：自动连接 + 按钮锁定 ✅（2026-08-13）
 
@@ -202,18 +204,44 @@
 |---|---|
 | `static/js/app.js` | `startSpeakPolling()` 传入 `sessionid`，检查 `resp.data === false` |
 
-**当前 Commit 状态**（2026-08-13 同步到 GitHub）：
-- Lisa 仓库：`678babb`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
-- LiveTalking 仓库：`bfd1b20`（main）→ `git@github.com:cmm198774/LiveTalking-Local-Modified.git`
+**当前 Commit 状态**（2026-08-17 同步到 GitHub）：
+- Lisa 仓库：`a70f200`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
+- LiveTalking 仓库：`f80602c`（main）→ `git@github.com:cmm198774/LiveTalking-Local-Modified.git`
 
-**本次同步内容**：
-- Lisa：Phase 3f 前端改动（自动连接、按钮锁定、chunk 流水线）+ README 更新（Phase 3f 功能、/is_speaking API、架构图修复）+ 设计文档（spec + plan）
-- LiveTalking：chunk 测试文件（test_chunk_detailed.py、test_chunk_pipeline.py）+ README 新增"本地修改说明"（SessionPool、Chunk 流水线、GPU 资源管理、启动命令）
+**本次同步内容（2026-08-17）**：
+- Lisa：README 添加 Phase 3g 唇型修复说明 + 启动命令 avatar_id 改为 `lisa_avatar` + CLAUDE.md 进度同步 + Lisa 参考图
+- LiveTalking：唇型抽搐修复（silent_mask + 原始帧替代）+ Lisa avatar 生成测试脚本 + README 新增第 4 节"唇型修复说明"
 
 **性能指标**（400 字文本，8 个 chunks）：
 - 首帧延迟：~2s（之前 10+ 秒）
 - chunk 间停顿：0（无缝衔接）
 - 视频流畅度：始终流畅（无冻结）
+
+#### Phase 3g：唇型抽搐修复 ✅（2026-08-17）
+
+**问题**：话音结束时嘴唇出现约 10 帧的不自然抽搐（有声音时正常，无声音时抽搐）。
+
+**根因分析**：
+- 音频尾部进入静音区间后，Whisper 特征提取的 sliding window 混合了历史说话帧与静音帧
+- 混合区域的声学特征不稳定 → MuseTalk 推理结果失真 → 嘴型抽搐
+- 音频淡出（audio fade-out）会加剧此问题（尾部音量渐弱产生更多不稳定特征帧）
+
+**修复方案**（LiveTalking `avatars/base_avatar.py`）：
+
+1. `inference()` 阶段：检测每个 batch 中音频帧的 `type`（`AudioFrameData.type`: 0=说话，1=静音），生成 `silent_mask` 列表
+2. 静音帧的推理结果用 `None` 替代（不能直接放 `None` 进 numpy 数组，用 Python list 做 mask，在 `put` 到队列时替换）
+3. `process_frames()` 阶段：当 `res_frame is None` 时走静音分支，直接使用原始视频帧（`frame_list_cycle[idx]`），跳过 `paste_back_frame()` 调用
+
+**音频淡出**：已移除（用户判断淡出与抽搐有关，恢复 `tts/edge.py` 原始代码，无淡出处理）
+
+**过渡混合**：`enable_transition` 标志控制说话↔静音的帧渐变（`cv2.addWeighted`，0.5s），当前默认关闭（直接使用原始帧效果更自然）
+
+**LiveTalking 改动文件**：
+| 文件 | 改动 |
+|---|---|
+| `avatars/base_avatar.py` `inference()` | 新增 `silent_mask` 检测，静音帧推理结果放 `None` 到队列 |
+| `avatars/base_avatar.py` `process_frames()` | 新增 `res_frame is None` 分支，走原始帧；初始化 `_last_speaking_frame`/`_last_silent_frame` 防 UnboundLocalError |
+| `tts/edge.py` | 恢复原始代码（移除音频淡出） |
 
 #### Phase 3e：LiveTalking 稳定性修复 ✅（2026-08-10）
 
@@ -261,7 +289,7 @@
 # LiveTalking 服务（单独终端）
 set PYTHONPATH=G:\JupyterProject\LiveTalking
 cd G:\JupyterProject\LiveTalking
-C:\ProgramData\Anaconda3\envs\py310\python.exe app.py --model musetalk --avatar_id musetalk_avatar1 --transport webrtc --listenport 8010 --pool_size 2
+C:\ProgramData\Anaconda3\envs\py310\python.exe app.py --model musetalk --avatar_id lisa_avatar --transport webrtc --listenport 8010 --pool_size 2
 
 # Lisa 主服务（另一个终端）
 conda run -n py310 python server.py
@@ -338,7 +366,7 @@ conda run -n py310 python server.py
 
 # 终端 1: LiveTalking 服务（WebRTC 视频流）
 cd G:\JupyterProject\LiveTalking
-C:\ProgramData\Anaconda3\envs\py310\python.exe app.py --model musetalk --avatar_id musetalk_avatar1 --transport webrtc --listenport 8010 --pool_size 2
+C:\ProgramData\Anaconda3\envs\py310\python.exe app.py --model musetalk --avatar_id lisa_avatar --transport webrtc --listenport 8010 --pool_size 2
 
 # 终端 2: Lisa 主服务（FastAPI + SSE 文字流）
 conda run -n py310 python server.py
@@ -378,8 +406,12 @@ conda run -n py310 python server.py
      - `avatars/base_avatar.py:383-467` — `process_frames()` 消费推理结果
      - `avatars/audio_features/whisper.py:58-76` — `run_step()` 提取音频特征
      - `server/webrtc.py:111-152` — `recv()` 从 `_queue` 取帧
-   - **下一步调试**：在队列 get/put 处加时间戳日志、检查队列大小、尝试减小 `batch_size`、加 `torch.cuda.synchronize()` 捕获 CUDA 错误
-   - **临时方案**：每次测试前重启 LiveTalking，用 `--max_session 1`，发短文本（<50 字）更稳定
+   - **当前状态**：SessionPool 改造后未再复现（`pool_size=2` + `reset_for_reuse()` 稳定运行）
+7. **唇型修复调试踩坑（2026-08-17）**：
+   - **numpy 数组不能存 None**：`pred[i] = None` 会崩溃（`TypeError: int() argument must be a string`）。解决：用 Python list `silent_mask` 记录位置，在 `res_frame_queue.put()` 时替换
+   - **`paste_back_frame(None, idx)` 导致画面消失**：process_frames 对 None 调用 paste_back_frame 会崩溃。解决：`res_frame is None` 时走静音分支，直接使用 `frame_list_cycle[idx]`
+   - **`UnboundLocalError: _last_speaking_frame`**：过渡混合逻辑使用了未初始化的变量。解决：在 `process_frames()` 开头初始化 `_last_speaking_frame = None` 和 `_last_silent_frame = None`
+   - **SessionPool exhausted（数字人不可用）**：`pool_size=1` 时 Playwright 测试占了唯一槽位。解决：`pool_size=2`
 
 ## Agent 流程图
 ```
@@ -518,16 +550,18 @@ data: {"type": "done"}
 ```
 
 ### LiveTalking API 端点
-- `POST /echo` — 发送文字，触发数字人说话
-- `GET /webrtcapi.html` — WebRTC 前端页面
-- `POST /whep` — WHEP 协议建立 WebRTC 连接
+- `POST /offer` — 建立 WebRTC 连接（SDP offer/answer）
+- `POST /human` — 发送文字，触发数字人说话（`sessionid` 参数必填）
+- `GET /is_speaking?sessionid=xxx` — 查询数字人是否在说话（返回 `{code:0, data: true/false}`）
+- `POST /humanaudio` — 发送音频文件直接播放
+- `GET /webrtcapi.html` — WebRTC 独立测试页
 
 ### 关键配置
 - LiveTalking 端口：`8010`
 - Lisa 主服务端口：`8000`
 - 传输模式：`webrtc`（本地直连，不需要 STUN）
 - 数字人模型：`musetalk`
-- Avatar ID：`musetalk_avatar1`
+- Avatar ID：`lisa_avatar`
 
 ### 依赖版本
 - PyTorch 2.10.0+cu128（已有，不要装 PyTorch 3.12 浪费磁盘）
