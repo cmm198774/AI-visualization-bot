@@ -1,0 +1,24 @@
+###############################################################################
+#  Lisa 主服务 Dockerfile
+#  纯 CPU 服务，不需要 GPU
+#  基础镜像 python:3.10-slim（约 150MB）
+###############################################################################
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# 系统依赖（gcc 用于编译 bcrypt 等 C 扩展）
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖（利用 Docker 层缓存）
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制代码
+COPY . .
+
+EXPOSE 8000
+
+CMD ["python", "server.py"]

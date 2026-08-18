@@ -1,0 +1,101 @@
+###############################################################################
+#  Lisa 办公室 Docker Compose 编排
+#
+#  目标平台: Linux + NVIDIA GPU，局域网部署
+#  网络策略:
+#    - livetalking: network_mode: host（WebRTC 需要宿主机真实 IP）
+#    - lisa / redis / qdrant: bridge 网络（compose 内部 DNS 互通）
+#
+#  使用方式:
+#    1. 编辑 .env 填入 API keys
+#    2. 准备好 models/ 和 data/ 目录（模型和 Avatar 素材）
+#    3. docker-compose up -d --build
+###############################################################################
+version: '3.8'
+
+services:
+
+  # ═══════════════════════════════════════════════════════════
+  # Lisa 主服务（FastAPI + LangGraph）
+  # ═══════════════════════════════════════════════════════════
+  lisa:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.lisa
+    container_name: lisa-server
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # Docker 内用 compose 服务名，覆盖 .env 中的 localhost
+      - REDIS_HOST=redis
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - LIVETALKING_URL=http://host.docker.internal:8010
+      - SERVER_HOST=0.0.0.0
+    volumes:
+      - ./users.db:/app/users.db
+    depends_on:
+      - redis
+      - qdrant
+    extra_hosts:
+      # 让 lisa 容器能通过 host.docker.internal 访问宿主机上的 livetalking
+      - "host.docker.internal:host-gateway"
+    networks:
+      - lisa-net
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # LiveTalking 数字人服务（GPU + WebRTC）
+  # network_mode: host — 容器直接使用宿主机网络，WebRTC 直通
+  # gpus: all — 使用所有 GPU
+  # ═══════════════════════════════════════════════════════════
+  livetalking:
+    build:
+      context: ./livetalking
+      dockerfile: Dockerfile
+    container_name: livetalking-server
+    network_mode: host
+    gpus: all
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # Redis（LangGraph checkpoint 持久化）
+  # ═══════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: lisa-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - lisa-net
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # Qdrant（向量数据库，RAG 知识库）
+  # ═══════════════════════════════════════════════════════════
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: lisa-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - lisa-net
+    restart: unless-stopped
+
+networks:
+  lisa-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  qdrant-data:
