@@ -49,9 +49,9 @@
   - 工具消息保留完整内容（不截断）
   - 压缩逻辑提取到 memory_utils.py，供 agent.py 和 commands.py 共用
 
-## 待完成功能
+## 已完成功能（Phase 2/3）
 
-### Phase 2: TTS 集成（2026-07-31 迁移到 edge-tts）
+### Phase 2: TTS 集成（已完成，Phase 3 后由 LiveTalking 负责）
 - [x] edge-tts 云端语音合成（zh-CN-XiaoxiaoNeural 音色，直接调用无需独立服务）
 - [x] 语音流式输出（逐句文字 + 音频，sentence_splitter 分句）
 - [x] 错误处理（TTS 失败静默降级为文本）
@@ -60,7 +60,7 @@
 - [x] 浏览器缓存修复（NoCacheStaticFiles 类）
 - [x] **TTS 流畅度已解决**（edge-tts 云端合成极快，消除句子间停顿）
 
-### Phase 3: MuseTalk 数字人集成（进行中，2026-08-07 启动）
+### Phase 3: MuseTalk 数字人集成（✅ 已完成，2026-08-07 启动）
 
 #### Phase 3a：LiveTalking Demo 验证 ✅
 - [x] 放弃 Docker 方案（WebRTC NAT 穿透失败），改用 Windows 原生运行
@@ -204,13 +204,9 @@
 |---|---|
 | `static/js/app.js` | `startSpeakPolling()` 传入 `sessionid`，检查 `resp.data === false` |
 
-**当前 Commit 状态**（2026-08-17 同步到 GitHub）：
-- Lisa 仓库：`8745fc9`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
-- LiveTalking 仓库：`f80602c`（main）→ `git@github.com:cmm198774/LiveTalking-Local-Modified.git`
-
-**本次同步内容（2026-08-17）**：
-- Lisa：README 添加 Phase 3g 唇型修复说明 + 启动命令 avatar_id 改为 `lisa_avatar` + CLAUDE.md 进度同步 + Lisa 参考图
-- LiveTalking：唇型抽搐修复（silent_mask + 原始帧替代）+ Lisa avatar 生成测试脚本 + README 新增第 4 节"唇型修复说明"
+**当前 Commit 状态**（2026-08-18 同步到 GitHub）：
+- Lisa 仓库：`24c8664`（main）→ `git@github.com:cmm198774/AI-visualization-bot.git`
+- LiveTalking 仓库：`613cd5f`（main）→ `git@github.com:cmm198774/LiveTalking-Local-Modified.git`
 
 **性能指标**（400 字文本，8 个 chunks）：
 - 首帧延迟：~2s（之前 10+ 秒）
@@ -274,6 +270,46 @@
 | `static/js/app.js` | `sendToLiveTalking(data.tts_content \|\| data.content)` 使用清洗后文本 |
 | `start_lisa.bat` | 新建，一键启动 LiveTalking + Lisa 服务（GBK 编码，`chcp 936`） |
 | `stop_lisa.bat` | 新建，一键关闭 Lisa + LiveTalking + Redis（按端口查 PID） |
+
+#### Phase 3i：Docker 化部署 ✅（2026-08-18）
+
+**目标**：将 Lisa 项目打包到 Docker，方便在 Linux 服务器上部署。
+
+**架构设计**：
+- **4 个容器**：lisa（FastAPI）、livetalking（GPU + WebRTC）、redis、qdrant
+- **网络策略**：livetalking 用 `network_mode: host` 解决 WebRTC NAT 穿透；其余用 compose bridge 网络
+- **GPU 直通**：`gpus: all` 使用所有 GPU
+- **模型管理**：通过 volume 挂载，不打进镜像（更新素材无需重建镜像）
+- **环境变量**：通过 `.env` + `env_file` 管理，代码零改动
+
+**为什么这次 Docker 能成功**：
+- Phase 3a 失败原因：Docker bridge 网络 NAT 阻断 UDP P2P，WebRTC ICE candidate 写的是容器内部 IP（172.17.0.x），浏览器连不上
+- 解决方案：`network_mode: host` 让容器直接使用宿主机真实 IP，SDP 里写的 ICE candidate 就是宿主机局域网 IP
+- 前提：目标机器是 Linux（原生支持 host 网络）+ 局域网部署
+
+**创建的文件**：
+| 文件 | 仓库 | 说明 |
+|---|---|---|
+| `docker-compose.yml` | Lisa 根目录 | 四服务编排（lisa/livetalking/redis/qdrant） |
+| `docker/Dockerfile.lisa` | Lisa 仓库 docker/ 目录 | Lisa Dockerfile（python:3.10-slim） |
+| `Dockerfile` | LiveTalking 根目录 | LiveTalking Dockerfile（nvcr.io/nvidia/pytorch:24.01-py3） |
+| `docs/superpowers/specs/2026-08-18-docker-deployment-design.md` | Lisa 仓库 | 设计文档 |
+
+**部署流程**：
+```bash
+# 目标 Linux 机器
+mkdir -p ~/lisa && cd ~/lisa
+git clone https://github.com/cmm198774/AI-visualization-bot.git .
+git clone https://github.com/cmm198774/LiveTalking-Local-Modified.git livetalking
+# 下载模型（百度网盘）+ 配置 .env
+docker-compose up -d --build
+# 浏览器打开 http://<服务器IP>:8000
+```
+
+**Docker 踩坑记录**：
+1. **Dockerfile 位置限制**：Docker 的 build context 不能超出 Dockerfile 所在目录。LiveTalking Dockerfile 必须放在 LiveTalking 仓库根目录，不能放在 Lisa 的 docker/ 目录
+2. **Docker Desktop for Windows 的 host 模式无效**：`network_mode: host` 在 WSL2 里映射的是 WSL2 虚拟机，不是 Windows 宿主机。所以 Docker 化只支持 Linux 目标机器
+3. **env_file 覆盖机制**：当 `env_file` 和 `environment` 同时存在时，`environment` 的值覆盖 `env_file` 中的同名变量
 
 #### Phase 3e：LiveTalking 稳定性修复 ✅（2026-08-10）
 
@@ -348,6 +384,10 @@ conda run -n py310 python server.py
 ├── stop_lisa.bat          # 一键关闭 Lisa + LiveTalking + Redis（GBK 编码）
 ├── users.db               # SQLite 用户数据库文件（运行时生成）
 │
+├── docker/                # Docker 部署文件
+│   └── Dockerfile.lisa    # Lisa 服务 Dockerfile
+├── docker-compose.yml     # Docker Compose 编排（Linux 部署，4 服务）
+│
 ├── static/                # 前端文件
 │   ├── index.html         # 主聊天页面
 │   ├── login.html         # 登录/注册页面
@@ -382,7 +422,8 @@ conda run -n py310 python server.py
     ├── superpowers/
     │   ├── specs/
     │   │   ├── 2026-07-25-visualization-chatbot-design.md   # Phase 1 设计文档
-    │   │   └── 2026-07-28-command-system-design.md          # 命令系统设计文档
+    │   │   ├── 2026-07-28-command-system-design.md          # 命令系统设计文档
+    │   │   └── 2026-08-18-docker-deployment-design.md       # Docker 部署设计文档
     │   └── plans/
     │       ├── 2026-07-26-phase1-core-pipeline.md           # Phase 1 实施计划
     │       ├── 2026-07-28-command-system.md                 # 命令系统实施计划
@@ -397,7 +438,28 @@ conda run -n py310 python server.py
 
 ## 运行方式
 
-### 一键启动/关闭（推荐）
+### Docker 部署（推荐，Linux + NVIDIA GPU）
+```bash
+# 1. 克隆代码
+mkdir -p ~/lisa && cd ~/lisa
+git clone https://github.com/cmm198774/AI-visualization-bot.git .
+git clone https://github.com/cmm198774/LiveTalking-Local-Modified.git livetalking
+
+# 2. 下载模型文件（百度网盘：https://pan.baidu.com/s/1uokpYFLX23ebEv0PbJ46Q 提取码: 26a5）
+mkdir -p models data/avatars
+unzip models_all.zip -d models/
+unzip avatar_data.zip -d data/avatars/
+
+# 3. 配置 .env（填入 API keys）
+cp .env.example .env && nano .env
+
+# 4. 一键启动（4 个容器：lisa + livetalking + redis + qdrant）
+docker-compose up -d --build
+
+# 5. 浏览器打开 http://<服务器IP>:8000
+```
+
+### 一键启动/关闭（Windows 推荐）
 ```bash
 # 双击或命令行运行：
 start_lisa.bat    # 启动 LiveTalking + Lisa 服务（两个独立终端窗口）
@@ -435,7 +497,7 @@ conda run -n py310 python server.py
 - **edge-tts 需要联网**：语音合成依赖 Microsoft 云端服务，断网时降级为纯文字输出
 
 ### Phase 3 踩坑记录
-1. **Docker WebRTC 完全不通**：Docker NAT 阻断 UDP P2P 连接，STUN 服务器也无法穿透。解决：放弃 Docker，改用 Windows 原生运行
+1. **Docker WebRTC NAT 穿透问题**：Docker bridge 网络 NAT 阻断 UDP P2P 连接，STUN 服务器也无法穿透。解决：Linux 上用 `network_mode: host` 让容器直接使用宿主机 IP；Windows 原生运行天然等价于 host 模式
 2. **accelerate 覆盖 PyTorch CUDA 版本**：`pip install -r requirements.txt` 会把 torch 降级为 CPU 版。解决：先装 PyTorch cu128，再装 requirements
 3. **Windows 下 `ModuleNotFoundError: No module named 'utils.logger'`**：`utils/` 目录缺 `__init__.py`。解决：创建空文件 `utils/__init__.py`
 4. **端口 8010 被占用**：旧进程未退出。解决：`netstat -ano | findstr :8010` 找 PID，`taskkill //PID xxx //F`
@@ -591,6 +653,17 @@ data: {"type": "done"}
 用户 → FastAPI → LangGraph → SSE(文字) → 前端
                   ↓
               LiveTalking API → WebRTC 视频流 → 前端
+
+Docker 部署架构 (Phase 3i):
+┌──────────────────── Linux 宿主机 ────────────────────┐
+│                                                       │
+│  ┌───────────────── compose 网络 (bridge) ─────────┐ │
+│  │  lisa(:8000) ←→ redis(:6379) / qdrant(:6333)   │ │
+│  └─────────────────────────────────────────────────┘ │
+│                                                       │
+│  livetalking (network_mode: host, :8010, gpus: all)  │
+│                                                       │
+└───────────────────────────────────────────────────────┘
 ```
 
 ### LiveTalking API 端点
