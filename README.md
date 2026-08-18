@@ -70,7 +70,56 @@
 
 ## 部署指南
 
-### 环境要求
+### 方式一：Docker 部署（推荐，Linux + NVIDIA GPU）
+
+适合 Linux 服务器部署，一键启动所有服务。
+
+**环境要求**：
+- Linux（Ubuntu 20.04+ / CentOS 8+）
+- NVIDIA GPU + 驱动 ≥ 525
+- Docker 20.10+ + Docker Compose v2.0+
+- NVIDIA Container Toolkit
+
+**部署步骤**：
+
+```bash
+# 1. 克隆代码
+mkdir -p ~/lisa && cd ~/lisa
+git clone https://github.com/cmm198774/AI-visualization-bot.git .
+git clone https://github.com/cmm198774/LiveTalking-Local-Modified.git livetalking
+
+# 2. 下载模型文件（从百度网盘）
+# 链接：https://pan.baidu.com/s/1uokpYFLX23ebEv0PbJ46Q（提取码：26a5）
+mkdir -p models data/avatars
+unzip models_all.zip -d models/
+unzip avatar_data.zip -d data/avatars/
+
+# 3. 配置环境变量
+cp .env.example .env
+nano .env  # 填入 API keys
+
+# 4. 一键启动
+docker-compose up -d --build
+
+# 5. 访问
+# 浏览器打开 http://<服务器IP>:8000
+```
+
+Docker Compose 会自动启动 4 个服务：
+- **lisa**：FastAPI 主服务（端口 8000）
+- **livetalking**：数字人服务（端口 8010，使用 `network_mode: host` 解决 WebRTC 穿透）
+- **redis**：对话记忆持久化（端口 6379）
+- **qdrant**：向量数据库（端口 6333）
+
+详细部署文档见 [Docker 部署指南](docs/superpowers/specs/2026-08-18-docker-deployment-design.md)
+
+---
+
+### 方式二：Windows 本地部署
+
+适合开发测试或 Windows 服务器。
+
+**环境要求**：
 
 | 依赖 | 版本 | 说明 |
 |------|------|------|
@@ -209,9 +258,13 @@ conda run -n py310 python server.py
 ├── sys_logger.py          # 日志系统
 ├── sys_memory.py          # RedisSaver（checkpoint 持久化）
 ├── start_redis.py         # Redis 服务器管理
-├── start_lisa.bat         # 一键启动脚本
-├── stop_lisa.bat          # 一键关闭脚本
+├── start_lisa.bat         # 一键启动脚本（Windows）
+├── stop_lisa.bat          # 一键关闭脚本（Windows）
 ├── .env                   # 环境变量配置
+│
+├── docker/                # Docker 部署文件
+│   └── Dockerfile.lisa    # Lisa 服务 Dockerfile
+├── docker-compose.yml     # Docker Compose 编排（Linux 部署）
 │
 ├── static/                # 前端文件
 │   ├── index.html         # 主聊天页面
@@ -220,6 +273,8 @@ conda run -n py310 python server.py
 │   └── js/                # 前端逻辑（含 WebRTC 连接管理）
 │
 └── docs/                  # 项目文档
+    └── superpowers/specs/ # 设计文档
+        └── 2026-08-18-docker-deployment-design.md  # Docker 部署设计
 ```
 
 ## 配置参数
