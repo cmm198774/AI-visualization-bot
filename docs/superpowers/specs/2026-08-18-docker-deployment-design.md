@@ -323,30 +323,33 @@ LIVETALKING_URL=http://localhost:8010
 - 更新素材不需要重建镜像
 - 多个部署点可以共享同一份模型文件（通过 NAS）
 
-### 6.2 目录结构
+### 6.2 部署目录结构
+
+`docker-compose.yml` 和 Dockerfile 都随 git 仓库自带，clone 下来就有。
 
 ```
-部署目录/
-├── docker-compose.yml
-├── .env                            # 配置文件
-├── Dockerfile                      # Lisa Dockerfile
+部署目录/（git clone Lisa 仓库到这里）
+├── docker-compose.yml              # compose 编排（随仓库自带）
+├── .env                            # 配置文件（手动创建，填入 API keys）
+├── docker/
+│   └── Dockerfile.lisa             # Lisa Dockerfile（随仓库自带）
 ├── server.py / agent.py / ...      # Lisa 代码
-├── users.db                        # 用户数据库
+├── users.db                        # 用户数据库（运行后生成）
 │
-├── livetalking/                    # LiveTalking 代码
-│   ├── Dockerfile
+├── livetalking/                    # git clone LiveTalking 仓库到这里
+│   ├── Dockerfile                  # LiveTalking Dockerfile（随仓库自带）
 │   ├── app.py
 │   ├── requirements.txt
 │   └── ...
 │
-├── models/                         # LiveTalking 模型（volume 挂载）
+├── models/                         # LiveTalking 模型（volume 挂载，从百度网盘下载）
 │   ├── musetalkV15/   (3.2GB)
 │   ├── sd-vae/        (639MB)
 │   ├── whisper/       (217MB)
 │   ├── dwpose/        (474MB)
 │   └── face-parse-bisent/ (96MB)
 │
-└── data/                           # Avatar 素材（volume 挂载）
+└── data/                           # Avatar 素材（volume 挂载，从百度网盘下载）
     └── avatars/
         └── lisa_avatar/  (730MB)
             ├── full_imgs/
@@ -401,33 +404,39 @@ sudo systemctl restart docker
 # 3. 验证 GPU
 docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi
 
-# 4. 下载代码
-mkdir -p ~/lisa-deploy && cd ~/lisa-deploy
-git clone git@github.com:cmm198774/AI-visualization-bot.git lisa
+# 4. 下载代码（Dockerfile 和 docker-compose.yml 已包含在仓库中）
+mkdir -p ~/lisa && cd ~/lisa
+git clone git@github.com:cmm198774/AI-visualization-bot.git .
 git clone git@github.com:cmm198774/LiveTalking-Local-Modified.git livetalking
 
 # 5. 下载模型（从百度网盘，通过 Windows scp 传过来）
+# 百度网盘链接：https://pan.baidu.com/s/1uokpYFLX23ebEv0PbJ46Q（提取码：26a5）
 mkdir -p models data/avatars
-# ... 传输并解压 models_all.zip 和 avatar_data.zip
+# 方式 A：Windows 下载后 scp 传输
+# scp models_all.zip user@linux-server:/tmp/
+# scp avatar_data.zip user@linux-server:/tmp/
+# 方式 B：Linux 命令行工具（BaiduPCS-Go）
+# ... 传输并解压到当前目录
+unzip /tmp/models_all.zip -d models/
+unzip /tmp/avatar_data.zip -d data/avatars/
 
-# 6. 配置 .env
-cd lisa
-nano .env  # 填入 API keys
+# 6. 配置 .env（填入 API keys）
+nano .env
 
-# 7. 放置 Dockerfile 和 docker-compose.yml
-cp ~/path/to/docker-compose.yml ~/lisa-deploy/
-cp ~/path/to/lisa-Dockerfile ~/lisa-deploy/lisa/Dockerfile
-cp ~/path/to/livetalking-Dockerfile ~/lisa-deploy/livetalking/Dockerfile
-
-# 8. 启动
-cd ~/lisa-deploy
+# 7. 一键启动（docker-compose 会自动构建镜像并启动所有服务）
 docker-compose up -d --build
 
-# 9. 验证
+# 8. 验证
 docker-compose ps
 docker exec livetalking-server nvidia-smi
 # 浏览器打开 http://<服务器IP>:8000
 ```
+
+**说明**：
+- Dockerfile 和 docker-compose.yml 已经包含在 git 仓库中，clone 下来就有，不需要手动复制
+- `docker-compose up --build` 会自动读取两个 Dockerfile 构建镜像，并启动所有 4 个服务（lisa、livetalking、redis、qdrant）
+- 首次构建镜像需要下载依赖包（LiveTalking 镜像约 8-10GB，Lisa 镜像约 500MB），后续启动很快
+- 更新代码后只需 `git pull` + `docker-compose up -d --build`，不需要手动操作 Docker 命令
 
 ---
 
@@ -461,15 +470,16 @@ docker exec lisa-server curl http://host.docker.internal:8010/human?text=test&se
 
 ---
 
-## 9. 后续工作
+## 9. 实施状态
 
-### 9.1 需要创建的文件
+### 9.1 已创建的文件
 
-| 文件 | 位置 | 说明 |
+| 文件 | 位置 | 提交 |
 |------|------|------|
-| `Dockerfile` | Lisa 项目根目录 | Lisa 的 Dockerfile |
-| `livetalking/Dockerfile` | LiveTalking 项目根目录 | LiveTalking 的 Dockerfile |
-| `docker-compose.yml` | Lisa 项目根目录（或独立 deploy 目录） | Compose 编排 |
+| `docker-compose.yml` | Lisa 仓库根目录 | `5b2e4f6` |
+| `docker/Dockerfile.lisa` | Lisa 仓库 `docker/` 目录 | `5b2e4f6` |
+| `Dockerfile` | LiveTalking 仓库根目录 | `fd89be7` |
+| 设计文档 | `docs/superpowers/specs/2026-08-18-docker-deployment-design.md` | `211e394` |
 
 ### 9.2 不需要改的代码
 
@@ -480,9 +490,17 @@ docker exec lisa-server curl http://host.docker.internal:8010/human?text=test&se
 ### 9.3 部署体验
 
 ```bash
-# 目标 Linux 机器上：
-git clone <仓库>
-# 手动放模型文件和 .env
-docker-compose up -d
-# 完成！浏览器打开 http://<服务器IP>:8000
+# 目标 Linux 机器上（完整流程）：
+# 1. 安装 Docker + NVIDIA Container Toolkit
+# 2. git clone 两个仓库
+# 3. 准备模型文件和 .env
+# 4. docker-compose up -d --build
+# 5. 完成！浏览器打开 http://<服务器IP>:8000
 ```
+
+### 9.4 待验证
+
+- [ ] 在 Linux 机器上实际构建镜像
+- [ ] 验证 WebRTC 视频流在 `network_mode: host` 下正常工作
+- [ ] 验证 Lisa → LiveTalking 通过 `host.docker.internal` 通信
+- [ ] 验证 GPU 直通（`--gpus all`）正常
